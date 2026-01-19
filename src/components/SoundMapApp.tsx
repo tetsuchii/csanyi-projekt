@@ -1169,9 +1169,19 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
   
   // Preview channel state
   const [previewingChannelId, setPreviewingChannelId] = useState<string | null>(null);
+  const previewTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Clean up preview timer on unmount
+  useEffect(() => {
+      return () => {
+          if (previewTimerRef.current) {
+              clearTimeout(previewTimerRef.current);
+          }
+      };
+  }, []);
 
   const toggleChannelPreview = (channel: GlobalChannel) => {
       if (!channel.audioUrl) return;
@@ -1181,14 +1191,28 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
       if (previewingChannelId === channel.id) {
           engine.stop(previewId);
           setPreviewingChannelId(null);
+          if (previewTimerRef.current) {
+              clearTimeout(previewTimerRef.current);
+              previewTimerRef.current = null;
+          }
       } else {
           // Stop any currently playing preview
           if (previewingChannelId) {
               engine.stop(`preview-${previewingChannelId}`);
           }
+          if (previewTimerRef.current) {
+              clearTimeout(previewTimerRef.current);
+          }
           
           engine.play(previewId, channel.audioUrl, channel.settings);
           setPreviewingChannelId(channel.id);
+          
+          // Auto-stop after 5 seconds
+          previewTimerRef.current = setTimeout(() => {
+              engine.stop(previewId);
+              setPreviewingChannelId(null);
+              previewTimerRef.current = null;
+          }, 5000);
       }
   };
 

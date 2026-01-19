@@ -40,6 +40,7 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const scrollViewportRef = useRef<HTMLDivElement | null>(null);
+    const playbackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
         if (!open) {
@@ -47,6 +48,10 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
             if (audioRef.current) {
                 audioRef.current.pause();
                 audioRef.current = null;
+            }
+            if (playbackTimerRef.current) {
+                clearTimeout(playbackTimerRef.current);
+                playbackTimerRef.current = null;
             }
             setPlayingId(null);
             setSearchQuery('');
@@ -104,11 +109,18 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
                 audioRef.current.pause();
                 audioRef.current = null;
             }
+            if (playbackTimerRef.current) {
+                clearTimeout(playbackTimerRef.current);
+                playbackTimerRef.current = null;
+            }
             setPlayingId(null);
         } else {
             // Start playing
             if (audioRef.current) {
                 audioRef.current.pause();
+            }
+            if (playbackTimerRef.current) {
+                clearTimeout(playbackTimerRef.current);
             }
             
             const audio = new Audio(sound.previews['preview-hq-mp3'] || sound.previews['preview-lq-mp3']);
@@ -116,7 +128,21 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
             audioRef.current = audio;
             setPlayingId(sound.id);
             
+            // Limit playback to 5 seconds
+            playbackTimerRef.current = setTimeout(() => {
+                if (audioRef.current) {
+                    audioRef.current.pause();
+                    audioRef.current = null;
+                }
+                setPlayingId(null);
+                playbackTimerRef.current = null;
+            }, 5000);
+            
             audio.onended = () => {
+                if (playbackTimerRef.current) {
+                    clearTimeout(playbackTimerRef.current);
+                    playbackTimerRef.current = null;
+                }
                 setPlayingId(null);
                 audioRef.current = null;
             };
