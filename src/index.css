@@ -63,9 +63,17 @@
     --font-sans: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
     --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     --color-red-50: oklch(.971 .013 17.38);
+    --color-red-300: oklch(.808 .114 19.571);
     --color-red-500: oklch(.637 .237 25.331);
     --color-red-600: oklch(.577 .245 27.325);
     --color-red-700: oklch(.505 .213 27.518);
+    --color-red-900: oklch(.396 .141 25.723);
+    --color-amber-50: oklch(.987 .022 95.277);
+    --color-amber-100: oklch(.962 .059 95.617);
+    --color-amber-200: oklch(.924 .12 95.746);
+    --color-amber-400: oklch(.828 .189 84.429);
+    --color-amber-800: oklch(.473 .137 46.201);
+    --color-amber-900: oklch(.414 .112 45.904);
     --color-green-50: oklch(.982 .018 155.826);
     --color-green-200: oklch(.925 .084 155.995);
     --color-green-800: oklch(.448 .119 151.328);
@@ -122,6 +130,7 @@
     --ease-out: cubic-bezier(0, 0, .2, 1);
     --ease-in-out: cubic-bezier(.4, 0, .2, 1);
     --animate-spin: spin 1s linear infinite;
+    --animate-pulse: pulse 2s cubic-bezier(.4, 0, .6, 1) infinite;
     --blur-md: 12px;
     --default-transition-duration: .15s;
     --default-transition-timing-function: cubic-bezier(.4, 0, .2, 1);
@@ -255,6 +264,9 @@
     letter-spacing: inherit;
     color: inherit;
     opacity: 1;
+    --lightningcss-light: initial;
+    --lightningcss-dark: ;
+    color-scheme: light;
     background-color: #0000;
     border-radius: 0;
   }
@@ -266,6 +278,9 @@
     letter-spacing: inherit;
     color: inherit;
     opacity: 1;
+    --lightningcss-light: initial;
+    --lightningcss-dark: ;
+    color-scheme: light;
     background-color: #0000;
     border-radius: 0;
   }
@@ -1023,6 +1038,10 @@
     animation: enter var(--tw-duration, .15s) var(--tw-ease, ease);
   }
 
+  .animate-pulse {
+    animation: var(--animate-pulse);
+  }
+
   .animate-spin {
     animation: var(--animate-spin);
   }
@@ -1289,6 +1308,14 @@
     border-style: none;
   }
 
+  .border-amber-200 {
+    border-color: var(--color-amber-200);
+  }
+
+  .border-amber-400 {
+    border-color: var(--color-amber-400);
+  }
+
   .border-green-200 {
     border-color: var(--color-green-200);
   }
@@ -1309,6 +1336,10 @@
     border-color: var(--primary);
   }
 
+  .border-red-300 {
+    border-color: var(--color-red-300);
+  }
+
   .border-slate-200 {
     border-color: var(--color-slate-200);
   }
@@ -1327,6 +1358,14 @@
 
   .border-l-transparent {
     border-left-color: #0000;
+  }
+
+  .bg-amber-50 {
+    background-color: var(--color-amber-50);
+  }
+
+  .bg-amber-100 {
+    background-color: var(--color-amber-100);
   }
 
   .bg-background {
@@ -1407,6 +1446,10 @@
     background-color: var(--primary);
   }
 
+  .bg-red-50 {
+    background-color: var(--color-red-50);
+  }
+
   .bg-red-600 {
     background-color: var(--color-red-600);
   }
@@ -1461,6 +1504,10 @@
 
   .p-4 {
     padding: calc(var(--spacing) * 4);
+  }
+
+  .p-5 {
+    padding: calc(var(--spacing) * 5);
   }
 
   .p-6 {
@@ -1571,6 +1618,10 @@
     text-align: center;
   }
 
+  .text-left {
+    text-align: left;
+  }
+
   .font-mono {
     font-family: var(--font-mono);
   }
@@ -1657,6 +1708,14 @@
     white-space: nowrap;
   }
 
+  .text-amber-800 {
+    color: var(--color-amber-800);
+  }
+
+  .text-amber-900 {
+    color: var(--color-amber-900);
+  }
+
   .text-card-foreground {
     color: var(--card-foreground);
   }
@@ -1703,6 +1762,14 @@
 
   .text-red-600 {
     color: var(--color-red-600);
+  }
+
+  .text-red-700 {
+    color: var(--color-red-700);
+  }
+
+  .text-red-900 {
+    color: var(--color-red-900);
   }
 
   .text-secondary-foreground {
@@ -2052,6 +2119,12 @@
   @media (hover: hover) {
     .hover\:bg-accent:hover {
       background-color: var(--accent);
+    }
+  }
+
+  @media (hover: hover) {
+    .hover\:bg-amber-200:hover {
+      background-color: var(--color-amber-200);
     }
   }
 
@@ -3335,6 +3408,12 @@ html {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: .5;
   }
 }
 

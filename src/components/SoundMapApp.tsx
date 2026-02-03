@@ -4,6 +4,7 @@ import { AuthView, supabase } from './auth/AuthView';
 import { ProfileView } from './auth/ProfileView';
 import { InteractiveTour, TourStep } from './InteractiveTour';
 import { SoundUploadModal } from './SoundUploadModal';
+import { LocalModeIndicator } from './LocalModeIndicator';
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "./ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
@@ -929,7 +930,15 @@ export const SoundMapApp = () => {
                           : h
                   )
               }));
-              await uploadFile(session.access_token, file, path);
+              try {
+                  await uploadFile(session.access_token, file, path);
+              } catch (uploadErr: any) {
+                  if (uploadErr.message === 'OFFLINE_MODE') {
+                      console.log('📍 Using direct URL in local mode');
+                  } else {
+                      console.error('Upload failed:', uploadErr);
+                  }
+              }
           } else if (uploadTarget.type === 'channel') {
               const path = `${session.user.id}/${currentProject.id}/gc_${uploadTarget.id}_${Date.now()}.mp3`;
               const audioUrl = sound.previews['preview-hq-mp3'] || sound.previews['preview-lq-mp3'];
@@ -941,10 +950,38 @@ export const SoundMapApp = () => {
                           : c
                   )
               }));
-              await uploadFile(session.access_token, file, path);
+              try {
+                  await uploadFile(session.access_token, file, path);
+              } catch (uploadErr: any) {
+                  if (uploadErr.message === 'OFFLINE_MODE') {
+                      console.log('📍 Using direct URL in local mode');
+                  } else {
+                      console.error('Upload failed:', uploadErr);
+                  }
+              }
           }
       } catch(e) {
-          console.error('Failed to download sound:', e);
+          console.log('⚠️ Failed to download sound from Freesound (might be CORS issue)');
+          const audioUrl = sound.previews['preview-hq-mp3'] || sound.previews['preview-lq-mp3'];
+          if (uploadTarget.type === 'hotspot') {
+              handleUpdateProject(p => ({
+                  ...p,
+                  hotspots: p.hotspots.map(h => 
+                      h.id === uploadTarget.id 
+                          ? {...h, audioUrl: audioUrl, name: sound.name} 
+                          : h
+                  )
+              }));
+          } else if (uploadTarget.type === 'channel') {
+              handleUpdateProject(p => ({
+                  ...p,
+                  globalChannels: p.globalChannels.map(c => 
+                      c.id === uploadTarget.id 
+                          ? {...c, audioUrl: audioUrl, name: sound.name} 
+                          : c
+                  )
+              }));
+          }
       }
   };
 
@@ -1016,6 +1053,7 @@ export const SoundMapApp = () => {
 
   return (
       <>
+        <LocalModeIndicator />
         <InteractiveTour 
             steps={TOUR_STEPS}
             currentStepIndex={tourStepIndex}
@@ -1157,6 +1195,51 @@ const pointsToSvgPath = (points: Point[]) => {
   return points.map(p => `${p.x},${p.y}`).join(" ");
 };
 
+// Check if two polygons overlap using bounding box and point-in-polygon tests
+const polygonsOverlap = (poly1: Point[], poly2: Point[]): boolean => {
+  // Helper: Check if a point is inside a polygon using ray casting
+  const isPointInPolygon = (point: Point, polygon: Point[]): boolean => {
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i].x, yi = polygon[i].y;
+      const xj = polygon[j].x, yj = polygon[j].y;
+      const intersect = ((yi > point.y) !== (yj > point.y))
+        && (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  };
+
+  // Check if any point of poly1 is inside poly2
+  for (const point of poly1) {
+    if (isPointInPolygon(point, poly2)) return true;
+  }
+
+  // Check if any point of poly2 is inside poly1
+  for (const point of poly2) {
+    if (isPointInPolygon(point, poly1)) return true;
+  }
+
+  // Check for edge intersections
+  const doSegmentsIntersect = (p1: Point, p2: Point, p3: Point, p4: Point): boolean => {
+    const ccw = (a: Point, b: Point, c: Point) => 
+      (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+    return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
+  };
+
+  for (let i = 0; i < poly1.length; i++) {
+    const p1 = poly1[i];
+    const p2 = poly1[(i + 1) % poly1.length];
+    for (let j = 0; j < poly2.length; j++) {
+      const p3 = poly2[j];
+      const p4 = poly2[(j + 1) % poly2.length];
+      if (doSegmentsIntersect(p1, p2, p3, p4)) return true;
+    }
+  }
+
+  return false;
+};
+
 const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, openUploadModal }: { project: Project, onUpdate: (p: Project | ((prev: Project) => Project)) => void, onBack: () => void, onPreview: () => void, session: any, onShare?: () => void, openUploadModal: (type: 'hotspot' | 'channel', id: string) => void }) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
@@ -1227,9 +1310,12 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
       
       try {
           await uploadFile(session.access_token, file, path);
-      } catch (e) {
-          console.error("Image upload failed", e);
-          // Ideally show toast
+      } catch (e: any) {
+          if (e.message === 'OFFLINE_MODE') {
+              console.log('📍 Image stored locally');
+          } else {
+              console.error("Image upload failed", e);
+          }
       }
     }
   };
@@ -1263,6 +1349,19 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
   const handleStopDrawing = () => {
     if (!isDrawing) return;
     if (currentPoints.length > 5) {
+        // Check for overlaps with existing hotspots
+        const hasOverlap = project.hotspots.some(existingHotspot => {
+            return polygonsOverlap(currentPoints, existingHotspot.points);
+        });
+
+        if (hasOverlap) {
+            // Show error and don't create the zone
+            alert('This zone overlaps with an existing zone. Please draw in a different area.');
+            setIsDrawing(false);
+            setCurrentPoints([]);
+            return;
+        }
+
         const newHotspot: Hotspot = {
             id: crypto.randomUUID(),
             points: currentPoints,

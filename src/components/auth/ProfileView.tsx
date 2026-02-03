@@ -31,7 +31,7 @@ export const ProfileView = ({ onBack, onSignOut, onShowOnboarding }: { onBack: (
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error("No active session");
 
-            const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-5be515e6/invite`, {
+            const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server/invite`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

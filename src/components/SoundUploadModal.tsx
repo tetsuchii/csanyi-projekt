@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Upload, Search, Play, Pause, Loader2, Download, Volume2 } from 'lucide-react';
+import { Upload, Search, Play, Pause, Loader2, Download, Volume2, Mic, Square, Trash2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -28,7 +28,7 @@ interface SoundUploadModalProps {
 }
 
 export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibrarySelect }: SoundUploadModalProps) => {
-    const [activeTab, setActiveTab] = useState<'local' | 'library'>('local');
+    const [activeTab, setActiveTab] = useState<'local' | 'library' | 'record'>('local');
     const [searchQuery, setSearchQuery] = useState('');
     const [sounds, setSounds] = useState<Sound[]>([]);
     const [isSearching, setIsSearching] = useState(false);
@@ -41,6 +41,17 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
     const fileInputRef = useRef<HTMLInputElement>(null);
     const scrollViewportRef = useRef<HTMLDivElement | null>(null);
     const playbackTimerRef = useRef<NodeJS.Timeout | null>(null);
+    
+    // Recording state
+    const [isRecording, setIsRecording] = useState(false);
+    const [recordedAudio, setRecordedAudio] = useState<Blob | null>(null);
+    const [recordingDuration, setRecordingDuration] = useState(0);
+    const [isPlayingRecording, setIsPlayingRecording] = useState(false);
+    const [recordingError, setRecordingError] = useState<string | null>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const recordingTimerRef = useRef<number | null>(null);
+    const recordedAudioRef = useRef<HTMLAudioElement | null>(null);
+    const audioChunksRef = useRef<Blob[]>([]);
 
     useEffect(() => {
         if (!open) {
@@ -60,8 +71,22 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
             setActiveTab('local');
             setCurrentPage(1);
             setTotalPages(0);
+            // Clean up recording state
+            stopRecording();
+            setRecordedAudio(null);
+            setRecordingDuration(0);
+            setIsPlayingRecording(false);
+            setRecordingError(null);
+        } else {
+            // Clear error when modal opens or tab changes
+            setRecordingError(null);
         }
     }, [open]);
+    
+    // Clear error when changing tabs
+    useEffect(() => {
+        setRecordingError(null);
+    }, [activeTab]);
 
     useEffect(() => {
         const scrollViewport = scrollViewportRef.current;
@@ -210,12 +235,125 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
         }
     };
 
+    // Recording functions
+    const startRecording = async () => {
+        if (isRecording) return;
+        
+        // Clear any previous errors
+        setRecordingError(null);
+        
+        // Check if browser supports getUserMedia
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            setRecordingError('Your browser does not support microphone recording. Please use a modern browser like Chrome, Firefox, or Edge.');
+            return;
+        }
+        
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const mediaRecorder = new MediaRecorder(stream);
+            mediaRecorderRef.current = mediaRecorder;
+            audioChunksRef.current = [];
+            
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunksRef.current.push(event.data);
+                }
+            };
+            
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+                setRecordedAudio(audioBlob);
+                
+                // Stop all tracks to turn off microphone
+                stream.getTracks().forEach(track => track.stop());
+            };
+            
+            mediaRecorder.start();
+            setIsRecording(true);
+            setRecordingDuration(0);
+            setRecordingError(null);
+            
+            recordingTimerRef.current = window.setInterval(() => {
+                setRecordingDuration(prevDuration => prevDuration + 1);
+            }, 1000);
+        } catch (error: any) {
+            console.error('Error starting recording:', error);
+            
+            let errorMessage = 'Could not access microphone. ';
+            
+            if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                errorMessage += 'Please allow microphone access in your browser settings and try again.';
+            } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                errorMessage += 'No microphone found. Please connect a microphone and try again.';
+            } else if (error.name === 'NotReadableError' || error.name === 'TrackStartError') {
+                errorMessage += 'Your microphone is already in use by another application.';
+            } else if (error.name === 'OverconstrainedError') {
+                errorMessage += 'Microphone constraints could not be satisfied.';
+            } else if (error.name === 'SecurityError') {
+                errorMessage += 'Microphone access is blocked. Please enable HTTPS or check your browser settings.';
+            } else {
+                errorMessage += 'An unknown error occurred. Please try again.';
+            }
+            
+            setRecordingError(errorMessage);
+        }
+    };
+
+    const stopRecording = () => {
+        if (!isRecording) return;
+        
+        const mediaRecorder = mediaRecorderRef.current;
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop();
+        }
+        
+        if (recordingTimerRef.current) {
+            clearInterval(recordingTimerRef.current);
+            recordingTimerRef.current = null;
+        }
+        setIsRecording(false);
+    };
+
+    const playRecordedAudio = () => {
+        if (!recordedAudio) return;
+        
+        const audio = new Audio(URL.createObjectURL(recordedAudio));
+        audio.play();
+        recordedAudioRef.current = audio;
+        setIsPlayingRecording(true);
+        
+        audio.onended = () => {
+            setIsPlayingRecording(false);
+            recordedAudioRef.current = null;
+        };
+    };
+
+    const stopPlayingRecording = () => {
+        const audio = recordedAudioRef.current;
+        if (audio) {
+            audio.pause();
+            audio.currentTime = 0;
+        }
+        
+        setIsPlayingRecording(false);
+        recordedAudioRef.current = null;
+    };
+
+    const handleRecordedAudioUpload = () => {
+        if (!recordedAudio) return;
+        
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const file = new File([recordedAudio], `recording_${timestamp}.wav`, { type: 'audio/wav' });
+        onLocalUpload(file);
+        onOpenChange(false);
+    };
+
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-w-4xl w-[90vw] h-[80vh] max-h-[700px] flex flex-col p-0">
                 <DialogHeader className="px-6 pt-6 pb-4 border-b">
                     <DialogTitle>Upload Audio</DialogTitle>
-                    <DialogDescription>Upload audio from your computer or browse the sound library.</DialogDescription>
+                    <DialogDescription>Upload from your computer, record from microphone, or browse the sound library.</DialogDescription>
                 </DialogHeader>
 
                 {/* Tabs */}
@@ -230,6 +368,17 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
                     >
                         <Upload className="w-4 h-4 inline mr-2" />
                         Upload from Computer
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('record')}
+                        className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+                            activeTab === 'record'
+                                ? 'border-indigo-600 text-indigo-600'
+                                : 'border-transparent text-slate-500 hover:text-slate-700'
+                        }`}
+                    >
+                        <Mic className="w-4 h-4 inline mr-2" />
+                        Record Audio
                     </button>
                     <button
                         onClick={() => setActiveTab('library')}
@@ -276,6 +425,142 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
                                 <p className="text-xs text-slate-400">
                                     Supports MP3, WAV, OGG, and other audio formats
                                 </p>
+                            </div>
+                        </div>
+                    ) : activeTab === 'record' ? (
+                        <div className="h-full flex items-center justify-center p-8">
+                            <div className="text-center space-y-6 max-w-md w-full">
+                                {recordingError ? (
+                                    <div className="bg-red-50 border border-red-300 rounded-lg p-5 space-y-3">
+                                        <div className="flex items-center gap-3 text-red-900">
+                                            <Mic className="w-5 h-5" />
+                                            <h3 className="font-semibold">Microphone Access Denied</h3>
+                                        </div>
+                                        <p className="text-sm text-red-700">
+                                            Click the microphone icon in your browser's address bar and allow access.
+                                        </p>
+                                        <div className="flex gap-2">
+                                            <Button
+                                                onClick={() => {
+                                                    setRecordingError(null);
+                                                    startRecording();
+                                                }}
+                                                className="flex-1"
+                                            >
+                                                Try Again
+                                            </Button>
+                                            <Button
+                                                onClick={() => {
+                                                    setRecordingError(null);
+                                                    setActiveTab('local');
+                                                }}
+                                                variant="outline"
+                                            >
+                                                Upload File Instead
+                                            </Button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className={`w-24 h-24 mx-auto rounded-full flex items-center justify-center ${
+                                            isRecording ? 'bg-red-50 animate-pulse' : 'bg-indigo-50'
+                                        }`}>
+                                            {isRecording ? (
+                                                <Mic className="w-12 h-12 text-red-600" />
+                                            ) : recordedAudio ? (
+                                                <Volume2 className="w-12 h-12 text-indigo-600" />
+                                            ) : (
+                                                <Mic className="w-12 h-12 text-indigo-600" />
+                                            )}
+                                        </div>
+                                        
+                                        <div>
+                                            <h3 className="text-lg font-semibold mb-2">
+                                                {isRecording ? 'Recording...' : recordedAudio ? 'Recording Complete' : 'Record Audio'}
+                                            </h3>
+                                            <p className="text-sm text-slate-500">
+                                                {isRecording 
+                                                    ? `Duration: ${formatDuration(recordingDuration)}`
+                                                    : recordedAudio
+                                                    ? `Recorded ${formatDuration(recordingDuration)}`
+                                                    : 'Record audio directly from your microphone'
+                                                }
+                                            </p>
+                                        </div>
+                                        
+                                        {!recordedAudio ? (
+                                            <>
+                                                <Button
+                                                    size="lg"
+                                                    onClick={isRecording ? stopRecording : startRecording}
+                                                    className="w-full"
+                                                    variant={isRecording ? 'destructive' : 'default'}
+                                                >
+                                                    {isRecording ? (
+                                                        <>
+                                                            <Square className="w-4 h-4 mr-2" />
+                                                            Stop Recording
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Mic className="w-4 h-4 mr-2" />
+                                                            Start Recording
+                                                        </>
+                                                    )}
+                                                </Button>
+                                                {!isRecording && (
+                                                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-left">
+                                                        <p className="text-xs text-amber-800">
+                                                            <strong>📌 Important:</strong> Your browser will ask for microphone permission. 
+                                                            Please click "Allow" in the permission popup that appears at the top of your browser.
+                                                        </p>
+                                                    </div>
+                                                )}
+                                            </>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                <div className="flex gap-2">
+                                                    <Button
+                                                        size="lg"
+                                                        onClick={isPlayingRecording ? stopPlayingRecording : playRecordedAudio}
+                                                        className="flex-1"
+                                                        variant="outline"
+                                                    >
+                                                        {isPlayingRecording ? (
+                                                            <>
+                                                                <Pause className="w-4 h-4 mr-2" />
+                                                                Pause
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <Play className="w-4 h-4 mr-2" />
+                                                                Play Preview
+                                                            </>
+                                                        )}
+                                                    </Button>
+                                                    <Button
+                                                        size="lg"
+                                                        onClick={() => {
+                                                            setRecordedAudio(null);
+                                                            setRecordingDuration(0);
+                                                        }}
+                                                        variant="outline"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </Button>
+                                                </div>
+                                                <Button
+                                                    size="lg"
+                                                    onClick={handleRecordedAudioUpload}
+                                                    className="w-full"
+                                                >
+                                                    <Download className="w-4 h-4 mr-2" />
+                                                    Use This Recording
+                                                </Button>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
                             </div>
                         </div>
                     ) : (

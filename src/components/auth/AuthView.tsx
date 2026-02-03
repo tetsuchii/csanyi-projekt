@@ -54,7 +54,7 @@ export const AuthView = ({ onLoginSuccess }: { onLoginSuccess: () => void }) => 
 
         try {
             // Use our custom server endpoint for auto-confirm
-            const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-5be515e6/signup`, {
+            const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server/signup`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
