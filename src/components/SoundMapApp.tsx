@@ -1,10 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Upload, Play, Pause, Music, X, Edit3, Volume2, Trash2, Plus, ArrowLeft, Image as ImageIcon, MoreVertical, Repeat, Check, MoveHorizontal, Settings2, ChevronUp, User as UserIcon, Share2, Copy, ExternalLink, Loader2 } from 'lucide-react';
+import { Upload, Play, Pause, Music, X, Edit3, Volume2, Trash2, Plus, ArrowLeft, Image as ImageIcon, MoreVertical, Repeat, Check, MoveHorizontal, Settings2, ChevronUp, User as UserIcon, Share2, Copy, ExternalLink, Loader2, AlertTriangle } from 'lucide-react';
 import { AuthView, supabase } from './auth/AuthView';
 import { ProfileView } from './auth/ProfileView';
 import { InteractiveTour, TourStep } from './InteractiveTour';
 import { SoundUploadModal } from './SoundUploadModal';
-import { LocalModeIndicator } from './LocalModeIndicator';
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "./ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
@@ -16,6 +15,7 @@ import { Slider } from "./ui/slider";
 import { Switch } from "./ui/switch";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription, DrawerTrigger } from "./ui/drawer";
+import { toast } from "sonner";
 
 // ---------------------------------------------------------------------------
 // TYPES
@@ -930,15 +930,7 @@ export const SoundMapApp = () => {
                           : h
                   )
               }));
-              try {
-                  await uploadFile(session.access_token, file, path);
-              } catch (uploadErr: any) {
-                  if (uploadErr.message === 'OFFLINE_MODE') {
-                      console.log('📍 Using direct URL in local mode');
-                  } else {
-                      console.error('Upload failed:', uploadErr);
-                  }
-              }
+              await uploadFile(session.access_token, file, path);
           } else if (uploadTarget.type === 'channel') {
               const path = `${session.user.id}/${currentProject.id}/gc_${uploadTarget.id}_${Date.now()}.mp3`;
               const audioUrl = sound.previews['preview-hq-mp3'] || sound.previews['preview-lq-mp3'];
@@ -950,38 +942,10 @@ export const SoundMapApp = () => {
                           : c
                   )
               }));
-              try {
-                  await uploadFile(session.access_token, file, path);
-              } catch (uploadErr: any) {
-                  if (uploadErr.message === 'OFFLINE_MODE') {
-                      console.log('📍 Using direct URL in local mode');
-                  } else {
-                      console.error('Upload failed:', uploadErr);
-                  }
-              }
+              await uploadFile(session.access_token, file, path);
           }
       } catch(e) {
-          console.log('⚠️ Failed to download sound from Freesound (might be CORS issue)');
-          const audioUrl = sound.previews['preview-hq-mp3'] || sound.previews['preview-lq-mp3'];
-          if (uploadTarget.type === 'hotspot') {
-              handleUpdateProject(p => ({
-                  ...p,
-                  hotspots: p.hotspots.map(h => 
-                      h.id === uploadTarget.id 
-                          ? {...h, audioUrl: audioUrl, name: sound.name} 
-                          : h
-                  )
-              }));
-          } else if (uploadTarget.type === 'channel') {
-              handleUpdateProject(p => ({
-                  ...p,
-                  globalChannels: p.globalChannels.map(c => 
-                      c.id === uploadTarget.id 
-                          ? {...c, audioUrl: audioUrl, name: sound.name} 
-                          : c
-                  )
-              }));
-          }
+          console.error('Failed to download sound:', e);
       }
   };
 
@@ -1053,7 +1017,6 @@ export const SoundMapApp = () => {
 
   return (
       <>
-        <LocalModeIndicator />
         <InteractiveTour 
             steps={TOUR_STEPS}
             currentStepIndex={tourStepIndex}
@@ -1195,14 +1158,15 @@ const pointsToSvgPath = (points: Point[]) => {
   return points.map(p => `${p.x},${p.y}`).join(" ");
 };
 
-// Check if two polygons overlap using bounding box and point-in-polygon tests
+// Check if two polygons overlap using point-in-polygon and edge intersection tests
 const polygonsOverlap = (poly1: Point[], poly2: Point[]): boolean => {
-  // Helper: Check if a point is inside a polygon using ray casting
+  // Check if any point of poly1 is inside poly2
   const isPointInPolygon = (point: Point, polygon: Point[]): boolean => {
     let inside = false;
     for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
       const xi = polygon[i].x, yi = polygon[i].y;
       const xj = polygon[j].x, yj = polygon[j].y;
+      
       const intersect = ((yi > point.y) !== (yj > point.y))
         && (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
       if (intersect) inside = !inside;
@@ -1210,30 +1174,33 @@ const polygonsOverlap = (poly1: Point[], poly2: Point[]): boolean => {
     return inside;
   };
 
-  // Check if any point of poly1 is inside poly2
+  // Check if any point of poly1 is in poly2
   for (const point of poly1) {
     if (isPointInPolygon(point, poly2)) return true;
   }
 
-  // Check if any point of poly2 is inside poly1
+  // Check if any point of poly2 is in poly1
   for (const point of poly2) {
     if (isPointInPolygon(point, poly1)) return true;
   }
 
-  // Check for edge intersections
-  const doSegmentsIntersect = (p1: Point, p2: Point, p3: Point, p4: Point): boolean => {
-    const ccw = (a: Point, b: Point, c: Point) => 
-      (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+  // Check if any edges intersect
+  const doEdgesIntersect = (p1: Point, p2: Point, p3: Point, p4: Point): boolean => {
+    const ccw = (A: Point, B: Point, C: Point) => {
+      return (C.y - A.y) * (B.x - A.x) > (B.y - A.y) * (C.x - A.x);
+    };
     return ccw(p1, p3, p4) !== ccw(p2, p3, p4) && ccw(p1, p2, p3) !== ccw(p1, p2, p4);
   };
 
   for (let i = 0; i < poly1.length; i++) {
     const p1 = poly1[i];
     const p2 = poly1[(i + 1) % poly1.length];
+    
     for (let j = 0; j < poly2.length; j++) {
       const p3 = poly2[j];
       const p4 = poly2[(j + 1) % poly2.length];
-      if (doSegmentsIntersect(p1, p2, p3, p4)) return true;
+      
+      if (doEdgesIntersect(p1, p2, p3, p4)) return true;
     }
   }
 
@@ -1247,6 +1214,9 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
   
   // Drawer state for mobile
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  
+  // Overlap warning state
+  const [showOverlapWarning, setShowOverlapWarning] = useState(false);
   
   const engine = useAudioEngine();
   
@@ -1310,12 +1280,9 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
       
       try {
           await uploadFile(session.access_token, file, path);
-      } catch (e: any) {
-          if (e.message === 'OFFLINE_MODE') {
-              console.log('📍 Image stored locally');
-          } else {
-              console.error("Image upload failed", e);
-          }
+      } catch (e) {
+          console.error("Image upload failed", e);
+          // Ideally show toast
       }
     }
   };
@@ -1349,14 +1316,14 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
   const handleStopDrawing = () => {
     if (!isDrawing) return;
     if (currentPoints.length > 5) {
-        // Check for overlaps with existing hotspots
-        const hasOverlap = project.hotspots.some(existingHotspot => {
-            return polygonsOverlap(currentPoints, existingHotspot.points);
-        });
+        // Check if new selection overlaps with any existing hotspots
+        const hasOverlap = project.hotspots.some(hotspot => 
+            polygonsOverlap(currentPoints, hotspot.points)
+        );
 
         if (hasOverlap) {
-            // Show error and don't create the zone
-            alert('This zone overlaps with an existing zone. Please draw in a different area.');
+            // Show popup alert and don't create the hotspot
+            setShowOverlapWarning(true);
             setIsDrawing(false);
             setCurrentPoints([]);
             return;
@@ -1468,9 +1435,19 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                                 }}
                             />
                         ))}
-                        {isDrawing && currentPoints.length > 0 && (
-                            <polygon points={pointsToSvgPath(currentPoints)} fill="rgba(99, 102, 241, 0.2)" stroke="#4f46e5" strokeWidth="0.5" />
-                        )}
+                        {isDrawing && currentPoints.length > 0 && (() => {
+                            const wouldOverlap = currentPoints.length > 5 && project.hotspots.some(hotspot => 
+                                polygonsOverlap(currentPoints, hotspot.points)
+                            );
+                            return (
+                                <polygon 
+                                    points={pointsToSvgPath(currentPoints)} 
+                                    fill={wouldOverlap ? "rgba(239, 68, 68, 0.2)" : "rgba(99, 102, 241, 0.2)"} 
+                                    stroke={wouldOverlap ? "#ef4444" : "#4f46e5"} 
+                                    strokeWidth="0.5" 
+                                />
+                            );
+                        })()}
                     </svg>
                 </div>
             )}
@@ -1527,6 +1504,34 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
             </Drawer>
         </div>
       </div>
+
+      {/* Overlap Warning Dialog */}
+      <AlertDialog open={showOverlapWarning} onOpenChange={setShowOverlapWarning}>
+        <AlertDialogContent className="max-w-md">
+          <div className="flex flex-col items-center text-center gap-4">
+            <div className="w-16 h-16 rounded-full bg-amber-100 flex items-center justify-center">
+              <AlertTriangle className="w-8 h-8 text-amber-600" />
+            </div>
+            <AlertDialogHeader className="space-y-3">
+              <AlertDialogTitle className="text-2xl font-semibold text-slate-900">
+                Selection Overlaps
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-sm text-slate-600 leading-relaxed">
+                This selection overlaps with an existing zone. Audio zones cannot overlap with each other. 
+                Please draw your selection in a different area that doesn't overlap with existing zones.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+          </div>
+          <AlertDialogFooter className="mt-2 flex justify-center">
+            <AlertDialogAction 
+              onClick={() => setShowOverlapWarning(false)}
+              className="bg-amber-600 hover:bg-amber-700 text-white w-full sm:w-auto"
+            >
+              Got it
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

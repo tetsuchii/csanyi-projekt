@@ -253,6 +253,101 @@ app.post("/make-server-5be515e6/user/preferences", async (c) => {
 });
 
 // ---------------------------------------------------------------------------
+// AUDIO VALIDATION
+// ---------------------------------------------------------------------------
+
+app.post("/make-server-5be515e6/validate-audio", async (c) => {
+    try {
+        const contentType = c.req.header('content-type');
+        
+        // Validate MIME type
+        const allowedMimeTypes = ['audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/ogg', 'audio/x-m4a'];
+        
+        if (!contentType || !allowedMimeTypes.some(type => contentType.includes(type))) {
+            return c.json({ 
+                valid: false, 
+                error: 'Unsupported audio format. Only MP3, M4A (AAC), and OGG are allowed.' 
+            }, 400);
+        }
+
+        // Get file from request
+        const formData = await c.req.formData();
+        const file = formData.get('file') as File;
+        
+        if (!file) {
+            return c.json({ valid: false, error: 'No file provided' }, 400);
+        }
+
+        // Validate file signature (magic bytes)
+        const buffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        
+        // Check for valid audio file signatures
+        const isMP3 = (bytes[0] === 0xFF && (bytes[1] & 0xE0) === 0xE0) || // MP3 frame
+                      (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33); // ID3
+        const isM4A = bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70; // ftyp
+        const isOGG = bytes[0] === 0x4F && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53; // OggS
+        
+        if (!isMP3 && !isM4A && !isOGG) {
+            return c.json({ 
+                valid: false, 
+                error: 'Invalid or corrupted audio file. File signature does not match allowed formats.' 
+            }, 400);
+        }
+
+        // Check for executable headers or suspicious content
+        const hasExecutableSignature = 
+            (bytes[0] === 0x4D && bytes[1] === 0x5A) || // MZ (Windows executable)
+            (bytes[0] === 0x7F && bytes[1] === 0x45 && bytes[2] === 0x4C && bytes[3] === 0x46) || // ELF
+            (bytes[0] === 0xCA && bytes[1] === 0xFE && bytes[2] === 0xBA && bytes[3] === 0xBE); // Mach-O
+        
+        if (hasExecutableSignature) {
+            return c.json({ 
+                valid: false, 
+                error: 'File appears to be executable or malicious. Upload rejected.' 
+            }, 400);
+        }
+
+        return c.json({ valid: true });
+    } catch (err) {
+        console.error('Audio validation error:', err);
+        return c.json({ valid: false, error: 'Validation failed' }, 500);
+    }
+});
+
+// ---------------------------------------------------------------------------
+// REPORTING SYSTEM
+// ---------------------------------------------------------------------------
+
+app.post("/make-server-5be515e6/report-audio", async (c) => {
+    try {
+        const { projectId, hotspotId, reason } = await c.req.json();
+        
+        if (!projectId || !hotspotId || !reason) {
+            return c.json({ error: 'Missing required fields' }, 400);
+        }
+
+        const reportId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+        const key = `report_${reportId}`;
+        
+        await kv.set(key, {
+            projectId,
+            hotspotId,
+            reason,
+            timestamp: new Date().toISOString(),
+            status: 'pending'
+        });
+        
+        console.log(`Audio report created: ${reportId} for project ${projectId}, hotspot ${hotspotId}`);
+        
+        return c.json({ success: true, reportId });
+    } catch (err) {
+        console.error('Report submission error:', err);
+        return c.json({ error: 'Failed to submit report' }, 500);
+    }
+});
+
+// ---------------------------------------------------------------------------
 // PUBLIC ACCESS (Shared Projects)
 // ---------------------------------------------------------------------------
 
