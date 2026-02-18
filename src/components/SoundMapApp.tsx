@@ -715,14 +715,14 @@ const TOUR_STEPS: TourStep[] = [
         id: 'upload-image',
         targetId: 'tour-upload-image',
         title: 'Upload Your Base Image',
-        description: 'Upload the image you want to make interactive. This could be a floorplan, a map, artwork, or any image where you want to create audio zones.',
+        description: 'Upload the image you want to make interactive. This could be a map, artwork, or any image where you want to create audio zones.',
         placement: 'bottom'
     },
     {
         id: 'draw-zones',
         targetId: 'tour-canvas-area',
         title: 'Draw Audio Zones',
-        description: 'Click on your image to draw polygons around areas you want to make interactive. Each zone can have its own audio. Click multiple points to create the shape, then click near the starting point to close it.',
+        description: 'Click and hold on the image to draw a polygon around an interactive area. Release the mouse to finish. Each zone can have its own audio.',
         placement: 'left'
     },
     {
@@ -736,7 +736,7 @@ const TOUR_STEPS: TourStep[] = [
         id: 'zone-upload-audio',
         targetId: 'tour-zone-upload-audio',
         title: 'Add Audio to Zone',
-        description: 'Now add an audio file to this zone. Click "Upload Audio" to choose a file from your computer or browse sounds from the library.',
+        description: 'Now add an audio file to this zone. Click "Upload Audio" to choose a file from your computer or browse sounds from the library or record with your microphone.',
         placement: 'left'
     },
     {
