@@ -375,16 +375,18 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
             }, 1000);
             
         } catch (error) {
-            console.error('Error accessing microphone:', error);
+            // Handle microphone access errors gracefully
             if (error instanceof DOMException) {
                 if (error.name === 'NotAllowedError') {
                     setRecordingError('Microphone permission denied. Please allow microphone access to record audio.');
                 } else if (error.name === 'NotFoundError') {
                     setRecordingError('No microphone found. Please connect a microphone and try again.');
                 } else {
+                    console.error('Error accessing microphone:', error);
                     setRecordingError('Failed to access microphone. Please check your device settings.');
                 }
             } else {
+                console.error('Error accessing microphone:', error);
                 setRecordingError('An unexpected error occurred while accessing the microphone.');
             }
         }
@@ -701,7 +703,7 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
                                                 {sounds.map((sound) => (
                                                     <div
                                                         key={sound.id}
-                                                        className="flex items-start gap-3 p-4 bg-white border rounded-lg hover:border-indigo-300 hover:bg-indigo-50 transition-all group max-w-full"
+                                                        className="flex items-start gap-3 p-4 bg-white border rounded-lg hover:border-indigo-300 hover:bg-indigo-50 transition-all group"
                                                     >
                                                         {/* Play/Pause Button */}
                                                         <button
@@ -716,16 +718,16 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
                                                         </button>
 
                                                         {/* Info */}
-                                                        <div className="flex-1 min-w-0 max-w-[calc(100%-140px)]">
-                                                            <h4 className="font-medium text-sm break-words">{truncateText(sound.name)}</h4>
-                                                            <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5 flex-wrap">
-                                                                <span className="truncate max-w-[150px]">by {sound.username}</span>
+                                                        <div className="flex-1 min-w-0 overflow-hidden">
+                                                            <h4 className="font-medium text-sm truncate">{truncateText(sound.name, 25)}</h4>
+                                                            <div className="flex items-center gap-2 text-xs text-slate-500 mt-0.5">
+                                                                <span className="truncate max-w-[80px]">by {sound.username}</span>
                                                                 <span>•</span>
-                                                                <span>{formatDuration(sound.duration)}</span>
+                                                                <span className="shrink-0">{formatDuration(sound.duration)}</span>
                                                             </div>
                                                             {sound.description && (
-                                                                <p className="text-xs text-slate-500 mt-1 break-words">
-                                                                    {truncateText(sound.description)}
+                                                                <p className="text-xs text-slate-500 mt-1 truncate">
+                                                                    {truncateText(sound.description, 30)}
                                                                 </p>
                                                             )}
                                                         </div>

@@ -142,21 +142,68 @@ export const InteractiveTour = ({ steps, currentStepIndex, isOpen, onNext, onClo
   if (!isOpen || !step) return null;
 
   const computedRadius = targetBorderRadius.includes('%') ? targetBorderRadius : `calc(${targetBorderRadius} + 4px)`;
-
+  
   return createPortal(
-    <div className="fixed inset-0 z-[100] pointer-events-none">
-      {/* Highlight Box */}
+    <div className="fixed inset-0 z-[100]" style={{ pointerEvents: 'none' }}>
+      {/* Dark overlay with hole for target */}
       {targetRect && (
-        <div 
-            className="absolute transition-all duration-300 ease-in-out shadow-[0_0_0_9999px_rgba(0,0,0,0.7)] border-2 border-indigo-500 pointer-events-none"
+        <>
+          {/* Top */}
+          <div 
+            className="absolute bg-black/70"
             style={{
-                top: targetRect.top - 4,
-                left: targetRect.left - 4,
-                width: targetRect.width + 8,
-                height: targetRect.height + 8,
-                borderRadius: computedRadius
+              top: 0,
+              left: 0,
+              right: 0,
+              height: targetRect.top - 4,
+              pointerEvents: targetRect.top - 4 > 0 ? 'auto' : 'none'
             }}
-        />
+          />
+          {/* Bottom */}
+          <div 
+            className="absolute bg-black/70"
+            style={{
+              top: targetRect.bottom + 4,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              pointerEvents: 'auto'
+            }}
+          />
+          {/* Left */}
+          <div 
+            className="absolute bg-black/70"
+            style={{
+              top: targetRect.top - 4,
+              left: 0,
+              width: targetRect.left - 4,
+              height: targetRect.height + 8,
+              pointerEvents: targetRect.left - 4 > 0 ? 'auto' : 'none'
+            }}
+          />
+          {/* Right */}
+          <div 
+            className="absolute bg-black/70"
+            style={{
+              top: targetRect.top - 4,
+              left: targetRect.right + 4,
+              right: 0,
+              height: targetRect.height + 8,
+              pointerEvents: 'auto'
+            }}
+          />
+          {/* Highlight border */}
+          <div 
+              className="absolute transition-all duration-300 ease-in-out border-2 border-indigo-500 pointer-events-none"
+              style={{
+                  top: targetRect.top - 4,
+                  left: targetRect.left - 4,
+                  width: targetRect.width + 8,
+                  height: targetRect.height + 8,
+                  borderRadius: computedRadius
+              }}
+          />
+        </>
       )}
 
       {/* Tooltip */}

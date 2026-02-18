@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Upload, Play, Pause, Music, X, Edit3, Volume2, Trash2, Plus, ArrowLeft, Image as ImageIcon, MoreVertical, Repeat, Check, MoveHorizontal, Settings2, ChevronUp, User as UserIcon, Share2, Copy, ExternalLink, Loader2, AlertTriangle } from 'lucide-react';
+import { Upload, Play, Pause, Music, X, Edit3, Volume2, Trash2, Plus, ArrowLeft, Image as ImageIcon, MoreVertical, Repeat, Check, MoveHorizontal, Settings2, ChevronUp, ChevronDown, User as UserIcon, Share2, Copy, ExternalLink, Loader2, AlertTriangle } from 'lucide-react';
 import { AuthView, supabase } from './auth/AuthView';
 import { ProfileView } from './auth/ProfileView';
 import { InteractiveTour, TourStep } from './InteractiveTour';
 import { SoundUploadModal } from './SoundUploadModal';
+import { NarrationModal } from './NarrationModal';
 import { Button } from "./ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "./ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "./ui/alert-dialog";
@@ -308,13 +309,13 @@ const ShareDialogContent = ({ session, project }: { session: any, project: Proje
     useEffect(() => {
         setIsLoading(true);
         import('../utils/api').then(({ createShareLink }) => {
-            createShareLink(session?.user?.id, project.id).then((data: any) => {
+            createShareLink(session?.access_token, project.id).then((data: any) => {
                 setLink(`${window.location.origin}?s=${data.shortId}`);
             })
             .catch(err => console.error("Error creating share link:", err))
             .finally(() => setIsLoading(false));
         });
-    }, [session?.user?.id, project.id]);
+    }, [session?.access_token, project.id]);
 
     if (isLoading || !link) {
         return <div className="flex items-center justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-indigo-600" /></div>;
@@ -363,7 +364,10 @@ const SettingsPanelContent = ({
     session,
     openUploadModal,
     previewingChannelId,
-    toggleChannelPreview
+    toggleChannelPreview,
+    collapsedChannels,
+    toggleChannelCollapse,
+    setNarrationModalOpen
 }: {
     project: Project;
     selectedHotspotId: string | null;
@@ -374,6 +378,9 @@ const SettingsPanelContent = ({
     openUploadModal: (type: 'hotspot' | 'channel', id: string) => void;
     previewingChannelId: string | null;
     toggleChannelPreview: (channel: GlobalChannel) => void;
+    collapsedChannels: Set<string>;
+    toggleChannelCollapse: (channelId: string) => void;
+    setNarrationModalOpen: (open: boolean) => void;
 }) => {
     const selectedHotspot = project.hotspots.find(h => h.id === selectedHotspotId);
 
@@ -382,7 +389,7 @@ const SettingsPanelContent = ({
             <div className="p-6 space-y-6">
                 <div className="flex items-center justify-between">
                     <h2 className="font-bold text-lg">Zone Settings</h2>
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedHotspotId(null)}><X className="w-4 h-4" /></Button>
+                    <Button variant="ghost" size="sm" onClick={() => { if (typeof setSelectedHotspotId === 'function') setSelectedHotspotId(null); }}><X className="w-4 h-4" /></Button>
                 </div>
 
                 <div className="space-y-5">
@@ -406,6 +413,7 @@ const SettingsPanelContent = ({
                                 </div>
                             ) : (
                                 <Button 
+                                    id="tour-zone-upload-audio"
                                     variant="outline" 
                                     size="sm" 
                                     className="w-full"
@@ -453,7 +461,7 @@ const SettingsPanelContent = ({
                     )}
                         
                         <div className="pt-6 border-t space-y-3">
-                        <Button className="w-full" onClick={() => setSelectedHotspotId(null)}>
+                        <Button id="tour-zone-done-btn" className="w-full" onClick={() => setSelectedHotspotId(null)}>
                             <Check className="w-4 h-4 mr-2" /> Done
                         </Button>
                         <Button variant="ghost" className="w-full text-red-500 hover:text-red-600 hover:bg-red-50" onClick={() => { onUpdate(p => ({...p, hotspots: p.hotspots.filter(h => h.id !== selectedHotspot.id)})); setSelectedHotspotId(null); }}>
@@ -480,18 +488,13 @@ const SettingsPanelContent = ({
                                 <Button size="icon" variant="ghost" className="h-6 w-6 text-red-500" onClick={() => onUpdate(p => ({...p, introAudioFile: null, introAudioUrl: null, introAudioPath: null}))}><X className="w-3 h-3" /></Button>
                             </div>
                         ) : (
-                            <Button variant="outline" size="sm" className="w-full" asChild>
-                                <label>
-                                    <Upload className="w-3 h-3 mr-2" /> Upload Narration
-                                    <input type="file" accept="audio/*" className="hidden" onChange={async (e) => {
-                                            const file = e.target.files?.[0];
-                                            if (file) {
-                                                const path = `${session.user.id}/${project.id}/intro_${Date.now()}.mp3`;
-                                                onUpdate(p => ({ ...p, introAudioFile: file, introAudioUrl: URL.createObjectURL(file), introAudioPath: path }));
-                                                try { await uploadFile(session.access_token, file, path); } catch(e) { console.error(e); }
-                                            }
-                                    }} />
-                                </label>
+                            <Button 
+                                variant="outline" 
+                                size="sm" 
+                                className="w-full"
+                                onClick={() => setNarrationModalOpen(true)}
+                            >
+                                <Upload className="w-3 h-3 mr-2" /> Upload Narration
                             </Button>
                         )}
                         
@@ -523,25 +526,54 @@ const SettingsPanelContent = ({
                                 <p className="text-xs text-slate-400 mt-1">Rain, city noise, or ambient music</p>
                             </div>
                         )}
-                        {(project.globalChannels || []).map(channel => (
+                        {(project.globalChannels || []).map(channel => {
+                            const isCollapsed = collapsedChannels.has(channel.id);
+                            return (
                             <div key={channel.id} className="bg-white border rounded-lg p-3 shadow-sm">
-                                <div className="flex items-center justify-between">
-                                    <Input 
-                                        className="h-7 text-sm font-medium border-none w-32 focus-visible:ring-0" 
-                                        value={channel.name}
-                                        onChange={(e) => onUpdate(p => ({
-                                            ...p,
-                                            globalChannels: p.globalChannels.map(c => c.id === channel.id ? { ...c, name: e.target.value } : c)
-                                        }))}
-                                    />
-                                    <Button size="icon" variant="ghost" className="h-6 w-6 text-slate-400 hover:text-red-500" onClick={() => onUpdate(p => ({...p, globalChannels: p.globalChannels.filter(c => c.id !== channel.id)}))}><X className="w-3 h-3" /></Button>
+                                <div className="flex items-center justify-between gap-2">
+                                    <div 
+                                        className="flex items-center gap-2 flex-1 cursor-pointer min-w-0"
+                                        onClick={() => toggleChannelCollapse(channel.id)}
+                                    >
+                                        <Button 
+                                            size="icon" 
+                                            variant="ghost" 
+                                            className="h-6 w-6 shrink-0 text-slate-400 hover:text-slate-600"
+                                        >
+                                            {isCollapsed ? (
+                                                <ChevronDown className="w-4 h-4" />
+                                            ) : (
+                                                <ChevronUp className="w-4 h-4" />
+                                            )}
+                                        </Button>
+                                        <Input 
+                                            className="h-7 text-sm font-medium border-none flex-1 min-w-0 focus-visible:ring-0" 
+                                            value={channel.name}
+                                            onChange={(e) => {
+                                                e.stopPropagation();
+                                                onUpdate(p => ({
+                                                    ...p,
+                                                    globalChannels: p.globalChannels.map(c => c.id === channel.id ? { ...c, name: e.target.value } : c)
+                                                }));
+                                            }}
+                                            onClick={(e) => e.stopPropagation()}
+                                        />
+                                    </div>
+                                    <Button 
+                                        size="icon" 
+                                        variant="ghost" 
+                                        className="h-6 w-6 text-slate-400 hover:text-red-500 shrink-0" 
+                                        onClick={() => onUpdate(p => ({...p, globalChannels: p.globalChannels.filter(c => c.id !== channel.id)}))}
+                                    >
+                                        <X className="w-3 h-3" />
+                                    </Button>
                                 </div>
 
-                                {!channel.audioUrl ? (
+                                {!isCollapsed && (!channel.audioUrl ? (
                                     <Button 
                                         variant="outline" 
                                         size="sm" 
-                                        className="w-full text-xs"
+                                        className="w-full text-xs mt-3"
                                         onClick={() => openUploadModal('channel', channel.id)}
                                     >
                                         <Upload className="w-3 h-3 mr-2" /> Upload Audio
@@ -594,13 +626,14 @@ const SettingsPanelContent = ({
                                             />
                                         </div>
                                     </div>
-                                )}
+                                ))}
                             </div>
-                        ))}
+                        );
+                        })}
                     </div>
                 </div>
 
-                <div>
+                <div id="tour-zone-inventory">
                     <div className="flex items-center justify-between mb-4">
                         <Label className="text-slate-500 text-xs uppercase tracking-wider font-bold">Zone Inventory ({project.hotspots.length})</Label>
                     </div>
@@ -681,36 +714,64 @@ const TOUR_STEPS: TourStep[] = [
     {
         id: 'upload-image',
         targetId: 'tour-upload-image',
-        title: 'Upload Map',
-        description: 'Upload the base image for your sound map. It could be a floorplan, a map, or any artwork.',
+        title: 'Upload Your Base Image',
+        description: 'Upload the image you want to make interactive. This could be a floorplan, a map, artwork, or any image where you want to create audio zones.',
         placement: 'bottom'
+    },
+    {
+        id: 'draw-zones',
+        targetId: 'tour-canvas-area',
+        title: 'Draw Audio Zones',
+        description: 'Click on your image to draw polygons around areas you want to make interactive. Each zone can have its own audio. Click multiple points to create the shape, then click near the starting point to close it.',
+        placement: 'left'
+    },
+    {
+        id: 'zone-inventory',
+        targetId: 'tour-zone-inventory',
+        title: 'Zone Inventory',
+        description: 'All your created zones appear here. Click on any zone to select it and configure its audio settings.',
+        placement: 'top'
+    },
+    {
+        id: 'zone-upload-audio',
+        targetId: 'tour-zone-upload-audio',
+        title: 'Add Audio to Zone',
+        description: 'Now add an audio file to this zone. Click "Upload Audio" to choose a file from your computer or browse sounds from the library.',
+        placement: 'left'
+    },
+    {
+        id: 'zone-done',
+        targetId: 'tour-zone-done-btn',
+        title: 'Save Zone Settings',
+        description: 'Once you\'ve added audio and configured the zone settings, click "Done" to return to the main view.',
+        placement: 'top'
     },
     {
         id: 'intro-audio',
         targetId: 'tour-intro-audio',
-        title: 'Intro Narration',
-        description: 'Add audio that will play on the start screen. This sets the context for your users.',
+        title: 'Start Screen Narration',
+        description: 'Add a narration that plays on the start screen before users interact. This is perfect for setting context and providing instructions.',
         placement: 'left'
     },
     {
         id: 'add-channel',
         targetId: 'tour-add-channel',
-        title: 'Background Audio',
-        description: 'Add global background sounds like ambient noise or music that plays underneath specific zones.',
+        title: 'Background Audio Channels',
+        description: 'Add ambient sounds or background music that plays continuously underneath your zones. Great for rain, city noise, or atmospheric music.',
         placement: 'left'
     },
     {
         id: 'preview',
         targetId: 'tour-preview-btn',
-        title: 'Preview',
-        description: 'Test your interactive experience before sharing it.',
+        title: 'Preview Your Creation',
+        description: 'Test your interactive experience before sharing it with others.',
         placement: 'bottom'
     },
     {
         id: 'share',
         targetId: 'tour-share-btn',
-        title: 'Share',
-        description: 'Share the link to open on a tablet. Users can explore the image by touch, making it accessible for everyone.',
+        title: 'Share Your Sound Map',
+        description: 'Generate a shareable link to open on tablets or other devices. Users can explore by touch, making it accessible for everyone.',
         placement: 'bottom'
     }
 ];
@@ -730,6 +791,9 @@ export const SoundMapApp = () => {
   const [tourStepIndex, setTourStepIndex] = useState(0);
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [uploadTarget, setUploadTarget] = useState<{ type: 'hotspot' | 'channel', id: string } | null>(null);
+  const [narrationModalOpen, setNarrationModalOpen] = useState(false);
+  const [showMissingAudioWarning, setShowMissingAudioWarning] = useState(false);
+  const [missingAudioZones, setMissingAudioZones] = useState<string[]>([]);
 
   const handleTourNext = () => {
       if (tourStepIndex < TOUR_STEPS.length - 1) {
@@ -766,31 +830,15 @@ export const SoundMapApp = () => {
           const shortId = params.get('s');
 
           if (shortId) {
-               import('../utils/api').then(({ resolveShareLink, initServer }) => {
+               import('../utils/api').then(({ getSharedProject, initServer }) => {
                    initServer();
-                   resolveShareLink(shortId).then((data: any) => {
-                       const { userId, projectId } = data;
-                       return import('../utils/api').then(({ getSharedProject }) => getSharedProject(userId, projectId));
-                   })
-                   .then(setSharedProject)
-                   .catch((err) => {
-                       console.error("Error resolving short link:", err);
-                       setSharedError("Link invalid or expired.");
-                   });
+                   getSharedProject(shortId)
+                       .then(setSharedProject)
+                       .catch((err) => {
+                           console.error("Error loading shared project:", err);
+                           setSharedError("Link invalid or expired.");
+                       });
                });
-          } else {
-              const uid = params.get('userId');
-              const pid = params.get('projectId');
-              
-              if (uid && pid) {
-                  initServer();
-                  getSharedProject(uid, pid)
-                    .then(setSharedProject)
-                    .catch((err) => {
-                        console.error("Error loading shared project:", err);
-                        setSharedError("Project not found or could not be loaded.");
-                    });
-              }
           }
       }
   }, [isSharedView]);
@@ -874,6 +922,14 @@ export const SoundMapApp = () => {
   const openUploadModal = (type: 'hotspot' | 'channel', id: string) => {
       setUploadTarget({ type, id });
       setUploadModalOpen(true);
+      
+      // Close the tutorial when upload modal opens
+      if (showOnboarding) {
+          setShowOnboarding(false);
+          if (session?.access_token) {
+              saveUserPreferences(session.access_token, { hasSeenOnboarding: true }).catch(console.error);
+          }
+      }
   };
 
   const handleLocalUpload = async (file: File) => {
@@ -949,6 +1005,23 @@ export const SoundMapApp = () => {
       }
   };
 
+  const handleNarrationSave = async (file: File, path: string) => {
+      if (!session || !currentProject) return;
+      
+      handleUpdateProject(p => ({ 
+          ...p, 
+          introAudioFile: file, 
+          introAudioUrl: URL.createObjectURL(file), 
+          introAudioPath: path 
+      }));
+      
+      try { 
+          await uploadFile(session.access_token, file, path); 
+      } catch(e) { 
+          console.error('Failed to upload narration:', e); 
+      }
+  };
+
   const handleUpdateProject = (updatedProject: Project | ((prev: Project) => Project)) => {
       setProjects(prev => {
           const nextProjects = prev.map(p => {
@@ -959,15 +1032,26 @@ export const SoundMapApp = () => {
                    if (showOnboarding) {
                        // Step 1: Upload Image
                        if (tourStepIndex === 1 && nextP.imageUrl && !p.imageUrl) {
-                            setTourStepIndex(2);
+                            setTourStepIndex(2); // Move to draw zones step
                        }
-                       // Step 2: Intro Audio
-                       if (tourStepIndex === 2 && nextP.introAudioUrl && !p.introAudioUrl) {
-                            setTourStepIndex(3);
+                       // Step 2: Draw Zones - advance when first hotspot is created
+                       if (tourStepIndex === 2 && nextP.hotspots.length > 0 && p.hotspots.length === 0) {
+                            setTourStepIndex(3); // Move to zone inventory step
                        }
-                       // Step 3: Add Channel
-                       if (tourStepIndex === 3 && (nextP.globalChannels?.length || 0) > (p.globalChannels?.length || 0)) {
-                            setTourStepIndex(4);
+                       // Step 4: Zone Upload Audio - advance when audio is added to zone
+                       if (tourStepIndex === 4) {
+                           const hasAudioAdded = nextP.hotspots.some(h => h.audioUrl) && !p.hotspots.some(h => h.audioUrl);
+                           if (hasAudioAdded) {
+                               setTourStepIndex(5); // Move to zone done step
+                           }
+                       }
+                       // Step 6: Intro Audio (Narration)
+                       if (tourStepIndex === 6 && nextP.introAudioUrl && !p.introAudioUrl) {
+                            setTourStepIndex(7); // Move to add channel step
+                       }
+                       // Step 7: Add Channel (Background Audio)
+                       if (tourStepIndex === 7 && (nextP.globalChannels?.length || 0) > (p.globalChannels?.length || 0)) {
+                            setTourStepIndex(8); // Move to preview step
                        }
                    }
                    return nextP;
@@ -987,8 +1071,8 @@ export const SoundMapApp = () => {
   };
 
   const handleShare = () => {
-      if (showOnboarding && tourStepIndex === 5) {
-          setTourStepIndex(6); // Finish
+      if (showOnboarding && tourStepIndex === 9) {
+          // Move to final step
           setShowOnboarding(false);
           if (session?.access_token) {
             saveUserPreferences(session.access_token, { hasSeenOnboarding: true }).catch(console.error);
@@ -1025,7 +1109,7 @@ export const SoundMapApp = () => {
             onClose={handleTourClose}
         />
         {view === 'gallery' && (
-             <GalleryView projects={projects} onCreate={handleCreateProject} onSelect={(id) => { setCurrentProjectId(id); setView('editor'); }} onDelete={handleDeleteProject} onProfile={() => setView('profile')} isLoading={isLoadingProjects} />
+             <GalleryView projects={projects} onCreate={handleCreateProject} onSelect={(id) => { setCurrentProjectId(id); setView('editor'); }} onDelete={handleDeleteProject} onProfile={() => setView('profile')} isLoading={isLoadingProjects} session={session} />
         )}
         {view === 'player' && currentProject && (
              <PlayerView project={currentProject} onBack={() => setView('editor')} />
@@ -1036,12 +1120,26 @@ export const SoundMapApp = () => {
                 onUpdate={handleUpdateProject} 
                 onBack={() => setView('gallery')} 
                 onPreview={() => {
-                    if (showOnboarding && tourStepIndex === 4) setTourStepIndex(5);
-                    setView('player');
+                    // Check for zones without audio
+                    const zonesWithoutAudio = currentProject.hotspots
+                        .filter(h => !h.audioUrl)
+                        .map((h, index) => h.name || `Zone ${index + 1}`);
+                    
+                    if (zonesWithoutAudio.length > 0) {
+                        setMissingAudioZones(zonesWithoutAudio);
+                        setShowMissingAudioWarning(true);
+                    } else {
+                        if (showOnboarding && tourStepIndex === 8) setTourStepIndex(9); // Advance to share step
+                        setView('player');
+                    }
                 }} 
                 session={session}
                 onShare={handleShare}
                 openUploadModal={openUploadModal}
+                setNarrationModalOpen={setNarrationModalOpen}
+                tourStepIndex={tourStepIndex}
+                setTourStepIndex={setTourStepIndex}
+                showOnboarding={showOnboarding}
             />
         )}
         {!currentProject && view !== 'gallery' && <div>Error: Project not found</div>}
@@ -1052,6 +1150,59 @@ export const SoundMapApp = () => {
             onLocalUpload={handleLocalUpload}
             onLibrarySelect={handleLibrarySelect}
         />
+
+        {session && currentProject && (
+            <NarrationModal
+                open={narrationModalOpen}
+                onClose={() => setNarrationModalOpen(false)}
+                onSave={handleNarrationSave}
+                sessionUserId={session.user.id}
+                projectId={currentProject.id}
+            />
+        )}
+
+        {/* Warning dialog for zones without audio */}
+        <AlertDialog open={showMissingAudioWarning} onOpenChange={setShowMissingAudioWarning}>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle className="flex items-center gap-2">
+                        <AlertTriangle className="w-5 h-5 text-amber-500" />
+                        Zones Without Audio
+                    </AlertDialogTitle>
+                    <AlertDialogDescription asChild>
+                        <div>
+                            <p className="text-sm text-slate-500">
+                                The following zones do not have audio files attached:
+                            </p>
+                            <ul className="mt-3 space-y-1 text-sm list-none">
+                                {missingAudioZones.map((zone, index) => (
+                                    <li key={index} className="flex items-start gap-2">
+                                        <span className="text-amber-500 mt-0.5">•</span>
+                                        <span className="text-slate-700">{zone}</span>
+                                    </li>
+                                ))}
+                            </ul>
+                            <p className="mt-4 text-sm text-slate-600">
+                                These zones will be visible but won't play any sound when clicked in preview mode.
+                            </p>
+                        </div>
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel>Go Back</AlertDialogCancel>
+                    <AlertDialogAction
+                        onClick={() => {
+                            setShowMissingAudioWarning(false);
+                            if (showOnboarding && tourStepIndex === 4) setTourStepIndex(5);
+                            setView('player');
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-700"
+                    >
+                        Preview Anyway
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
       </>
   );
 };
@@ -1060,7 +1211,7 @@ export const SoundMapApp = () => {
 // GALLERY VIEW
 // ---------------------------------------------------------------------------
 
-const GalleryView = ({ projects, onCreate, onSelect, onDelete, onProfile, isLoading }: { projects: Project[], onCreate: () => void, onSelect: (id: string) => void, onDelete: (id: string) => void, onProfile: () => void, isLoading: boolean }) => {
+const GalleryView = ({ projects, onCreate, onSelect, onDelete, onProfile, isLoading, session }: { projects: Project[], onCreate: () => void, onSelect: (id: string) => void, onDelete: (id: string) => void, onProfile: () => void, isLoading: boolean, session: any }) => {
   return (
     <div className="min-h-screen bg-slate-50 p-8">
       <div className="max-w-6xl mx-auto">
@@ -1070,8 +1221,9 @@ const GalleryView = ({ projects, onCreate, onSelect, onDelete, onProfile, isLoad
             <p className="text-slate-500 mt-1">Select a sound map to edit or create a new one.</p>
           </div>
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" onClick={onProfile} className="text-slate-500 hover:text-indigo-600 h-12 w-12 sm:h-10 sm:w-10">
-                <UserIcon className="w-6 h-6 sm:w-5 sm:h-5" />
+            <Button variant="ghost" onClick={onProfile} className="text-slate-500 hover:text-indigo-600 h-12 sm:h-10 px-3 sm:px-4 flex items-center gap-2">
+                <UserIcon className="w-7 h-7 sm:w-6 sm:h-6 shrink-0" />
+                <span className="hidden sm:inline text-sm font-medium">{session?.user?.user_metadata?.full_name || session?.user?.email?.split('@')[0] || 'User'}</span>
             </Button>
             <Button 
                 id="tour-create-project"
@@ -1207,7 +1359,7 @@ const polygonsOverlap = (poly1: Point[], poly2: Point[]): boolean => {
   return false;
 };
 
-const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, openUploadModal }: { project: Project, onUpdate: (p: Project | ((prev: Project) => Project)) => void, onBack: () => void, onPreview: () => void, session: any, onShare?: () => void, openUploadModal: (type: 'hotspot' | 'channel', id: string) => void }) => {
+const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, openUploadModal, setNarrationModalOpen, tourStepIndex, setTourStepIndex, showOnboarding }: { project: Project, onUpdate: (p: Project | ((prev: Project) => Project)) => void, onBack: () => void, onPreview: () => void, session: any, onShare?: () => void, openUploadModal: (type: 'hotspot' | 'channel', id: string) => void, setNarrationModalOpen: (open: boolean) => void, tourStepIndex?: number, setTourStepIndex?: (index: number) => void, showOnboarding?: boolean }) => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentPoints, setCurrentPoints] = useState<Point[]>([]);
   const [selectedHotspotId, setSelectedHotspotId] = useState<string | null>(null);
@@ -1224,6 +1376,9 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
   const [previewingChannelId, setPreviewingChannelId] = useState<string | null>(null);
   const previewTimerRef = useRef<NodeJS.Timeout | null>(null);
   
+  // Collapsed channels state (all collapsed by default)
+  const [collapsedChannels, setCollapsedChannels] = useState<Set<string>>(new Set());
+  
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -1235,6 +1390,43 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
           }
       };
   }, []);
+
+  // Tour logic: Advance when zone is selected
+  useEffect(() => {
+      if (showOnboarding && tourStepIndex === 3 && selectedHotspotId) {
+          // Zone selected, advance to upload audio step
+          setTourStepIndex?.(4);
+      }
+  }, [selectedHotspotId, showOnboarding, tourStepIndex, setTourStepIndex]);
+
+  // Tour logic: Advance when Done button is clicked (zone deselected)
+  const handleSetSelectedHotspotId = useCallback((id: string | null) => {
+      const wasSelected = selectedHotspotId !== null;
+      setSelectedHotspotId(id);
+      
+      // If deselecting (Done button clicked) and on zone-done step, advance to intro-audio
+      if (showOnboarding && tourStepIndex === 5 && wasSelected && id === null) {
+          setTourStepIndex?.(6);
+      }
+  }, [selectedHotspotId, showOnboarding, tourStepIndex, setTourStepIndex]);
+  
+  // Initialize existing channels as collapsed (but not new ones)
+  useEffect(() => {
+      setCollapsedChannels(prev => {
+          // Keep channels that still exist
+          const existingIds = new Set(project.globalChannels.map(c => c.id));
+          const next = new Set<string>();
+          
+          // Add back channels that were previously collapsed and still exist
+          prev.forEach(id => {
+              if (existingIds.has(id)) {
+                  next.add(id);
+              }
+          });
+          
+          return next;
+      });
+  }, [project.globalChannels.length]); // Only run when channel count changes
 
   const toggleChannelPreview = (channel: GlobalChannel) => {
       if (!channel.audioUrl) return;
@@ -1304,7 +1496,7 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
     setIsDrawing(true);
     const point = getRelativeCoordinates(e);
     setCurrentPoints([point]);
-    setSelectedHotspotId(null);
+    handleSetSelectedHotspotId(null);
     engine.stopAll();
   };
 
@@ -1339,7 +1531,7 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
             settings: { volume: 1, pan: 0, loop: false, fadeIn: 0.5, fadeOut: 0.5 }
         };
         onUpdate({ ...project, hotspots: [...project.hotspots, newHotspot] });
-        setSelectedHotspotId(newHotspot.id);
+        handleSetSelectedHotspotId(newHotspot.id);
         // Auto open drawer on mobile if new hotspot created
         if (window.innerWidth < 1024) setIsDrawerOpen(true);
     }
@@ -1356,6 +1548,19 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
           settings: { volume: 0.5, pan: 0, loop: true, fadeIn: 2.0, fadeOut: 2.0 }
       };
       onUpdate({ ...project, globalChannels: [...(project.globalChannels || []), newChannel] });
+      // Keep new channel expanded by default (don't add to collapsed set)
+  };
+  
+  const toggleChannelCollapse = (channelId: string) => {
+      setCollapsedChannels(prev => {
+          const next = new Set(prev);
+          if (next.has(channelId)) {
+              next.delete(channelId);
+          } else {
+              next.add(channelId);
+          }
+          return next;
+      });
   };
 
   return (
@@ -1406,6 +1611,7 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                  </div>
             ) : (
                 <div 
+                    id="tour-canvas-area"
                     ref={imageContainerRef}
                     className="relative shadow-2xl"
                     onMouseDown={handleStartDrawing}
@@ -1426,7 +1632,7 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                                 style={{ pointerEvents: 'all', cursor: 'pointer', vectorEffect: 'non-scaling-stroke' }}
                                 onClick={(e) => { 
                                     e.stopPropagation(); 
-                                    setSelectedHotspotId(h.id); 
+                                    handleSetSelectedHotspotId(h.id); 
                                     if (h.audioUrl) {
                                         engine.stopAll();
                                         engine.play(h.id, h.audioUrl, h.settings);
@@ -1460,12 +1666,15 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                     project={project}
                     selectedHotspotId={selectedHotspotId}
                     onUpdate={onUpdate}
-                    setSelectedHotspotId={setSelectedHotspotId}
+                    setSelectedHotspotId={handleSetSelectedHotspotId}
                     addGlobalChannel={addGlobalChannel}
                     session={session}
                     openUploadModal={openUploadModal}
                     previewingChannelId={previewingChannelId}
                     toggleChannelPreview={toggleChannelPreview}
+                    collapsedChannels={collapsedChannels}
+                    toggleChannelCollapse={toggleChannelCollapse}
+                    setNarrationModalOpen={setNarrationModalOpen}
                 />
             </div>
         </div>
@@ -1488,16 +1697,15 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                             project={project}
                             selectedHotspotId={selectedHotspotId}
                             onUpdate={onUpdate}
-                            setSelectedHotspotId={(id) => {
-                                setSelectedHotspotId(id);
-                                // If creating/selecting, we might want to keep drawer open or logic depends on user flow.
-                                // For now, keep open.
-                            }}
+                            setSelectedHotspotId={handleSetSelectedHotspotId}
                             addGlobalChannel={addGlobalChannel}
                             session={session}
                             openUploadModal={openUploadModal}
                             previewingChannelId={previewingChannelId}
                             toggleChannelPreview={toggleChannelPreview}
+                            collapsedChannels={collapsedChannels}
+                            toggleChannelCollapse={toggleChannelCollapse}
+                            setNarrationModalOpen={setNarrationModalOpen}
                         />
                     </div>
                 </DrawerContent>

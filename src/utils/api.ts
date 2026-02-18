@@ -96,8 +96,8 @@ export const loadProjects = async (token: string) => {
     return projects;
 };
 
-export const getSharedProject = async (userId: string, projectId: string) => {
-    const res = await fetch(`${BASE_URL}/public/project?userId=${userId}&projectId=${projectId}`, {
+export const getSharedProject = async (shortId: string) => {
+    const res = await fetch(`${BASE_URL}/public/project?id=${shortId}`, {
         headers: {
              'Authorization': `Bearer ${publicAnonKey}`
         }
@@ -107,26 +107,13 @@ export const getSharedProject = async (userId: string, projectId: string) => {
     return project;
 };
 
-export const createShareLink = async (userId: string, projectId: string) => {
+export const createShareLink = async (token: string, projectId: string) => {
     const res = await fetch(`${BASE_URL}/share`, {
         method: 'POST',
-        headers: {
-             'Content-Type': 'application/json',
-             'Authorization': `Bearer ${publicAnonKey}`
-        },
-        body: JSON.stringify({ userId, projectId })
+        headers: getHeaders(token),
+        body: JSON.stringify({ projectId })
     });
     if (!res.ok) throw new Error("Failed to create share link");
-    return res.json();
-};
-
-export const resolveShareLink = async (shortId: string) => {
-    const res = await fetch(`${BASE_URL}/share/resolve?id=${shortId}`, {
-        headers: {
-             'Authorization': `Bearer ${publicAnonKey}`
-        }
-    });
-    if (!res.ok) throw new Error("Failed to resolve share link");
     return res.json();
 };
 
