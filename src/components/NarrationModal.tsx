@@ -287,7 +287,7 @@ export const NarrationModal = ({ open, onClose, onSave, sessionUserId, projectId
                                         <Button
                                             size="lg"
                                             onClick={() => fileInputRef.current?.click()}
-                                            className="w-full"
+                                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
                                         >
                                             <Upload className="w-4 h-4 mr-2" />
                                             Choose File
@@ -376,8 +376,8 @@ export const NarrationModal = ({ open, onClose, onSave, sessionUserId, projectId
                                             onClick={isRecording ? stopRecording : startRecording}
                                             className={`w-full ${
                                                 isRecording 
-                                                    ? 'bg-red-600 hover:bg-red-700' 
-                                                    : ''
+                                                    ? 'bg-red-600 hover:bg-red-700 text-white' 
+                                                    : 'bg-indigo-600 hover:bg-indigo-700 text-white'
                                             }`}
                                         >
                                             {isRecording ? (
@@ -446,7 +446,7 @@ export const NarrationModal = ({ open, onClose, onSave, sessionUserId, projectId
                                         <Button
                                             size="lg"
                                             onClick={handleSave}
-                                            className="w-full"
+                                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
                                         >
                                             <Check className="w-4 h-4 mr-2" />
                                             Use This Recording
@@ -464,7 +464,7 @@ export const NarrationModal = ({ open, onClose, onSave, sessionUserId, projectId
                         <Button variant="outline" onClick={onClose}>
                             Cancel
                         </Button>
-                        <Button onClick={handleSave}>
+                        <Button onClick={handleSave} className="bg-indigo-600 hover:bg-indigo-700 text-white">
                             Save Narration
                         </Button>
                     </div>

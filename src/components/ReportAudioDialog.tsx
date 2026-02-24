@@ -114,18 +114,19 @@ export const ReportAudioDialog = ({
               ))}
             </div>
 
-            <DialogFooter className="gap-2">
+            <DialogFooter className="gap-2 flex flex-col-reverse sm:flex-row">
               <Button
                 variant="outline"
                 onClick={() => onOpenChange(false)}
                 disabled={isSubmitting}
+                className="flex-1 sm:flex-1"
               >
                 Cancel
               </Button>
               <Button
                 onClick={handleSubmit}
                 disabled={!selectedReason || isSubmitting}
-                className="bg-red-600 hover:bg-red-700"
+                className="bg-red-600 hover:bg-red-700 text-white flex-1 sm:flex-1"
               >
                 {isSubmitting ? 'Submitting...' : 'Submit Report'}
               </Button>

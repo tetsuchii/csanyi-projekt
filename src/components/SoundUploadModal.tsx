@@ -56,6 +56,7 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
     const fileInputRef = useRef<HTMLInputElement>(null);
     const scrollViewportRef = useRef<HTMLDivElement | null>(null);
     const playbackTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
     // Voice recording state
     const [isRecording, setIsRecording] = useState(false);
@@ -116,6 +117,31 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
         scrollViewport.addEventListener('scroll', handleScroll);
         return () => scrollViewport.removeEventListener('scroll', handleScroll);
     }, [isLoadingMore, currentPage, totalPages, searchQuery]);
+
+    // Live search with debouncing
+    useEffect(() => {
+        // Clear previous debounce timer
+        if (searchDebounceRef.current) {
+            clearTimeout(searchDebounceRef.current);
+        }
+
+        // Only search if query is not empty and we're on the library tab
+        if (searchQuery.trim() && activeTab === 'library') {
+            searchDebounceRef.current = setTimeout(() => {
+                searchSounds();
+            }, 500); // 500ms debounce
+        } else if (!searchQuery.trim()) {
+            // Clear results if search query is empty
+            setSounds([]);
+            setHasSearched(false);
+        }
+
+        return () => {
+            if (searchDebounceRef.current) {
+                clearTimeout(searchDebounceRef.current);
+            }
+        };
+    }, [searchQuery, activeTab]);
 
     const searchSounds = async () => {
         if (!searchQuery.trim()) return;
@@ -519,7 +545,7 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
                                 <Button
                                     size="lg"
                                     onClick={() => fileInputRef.current?.click()}
-                                    className="w-full"
+                                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
                                 >
                                     <Upload className="w-4 h-4 mr-2" />
                                     Choose File
@@ -575,8 +601,8 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
                                             onClick={isRecording ? stopRecording : startRecording}
                                             className={`w-full ${
                                                 isRecording 
-                                                    ? 'bg-red-600 hover:bg-red-700' 
-                                                    : ''
+                                                    ? 'bg-red-600 hover:bg-red-700 text-white' 
+                                                    : 'bg-indigo-600 hover:bg-indigo-700 text-white'
                                             }`}
                                         >
                                             {isRecording ? (
@@ -645,7 +671,7 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
                                         <Button
                                             size="lg"
                                             onClick={useRecording}
-                                            className="w-full"
+                                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
                                         >
                                             <Check className="w-4 h-4 mr-2" />
                                             Use This Recording
@@ -669,7 +695,7 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
                                             className="pl-10"
                                         />
                                     </div>
-                                    <Button onClick={searchSounds} disabled={isSearching || !searchQuery.trim()}>
+                                    <Button onClick={searchSounds} disabled={isSearching || !searchQuery.trim()} className="bg-indigo-600 hover:bg-indigo-700 text-white">
                                         {isSearching ? (
                                             <Loader2 className="w-4 h-4 animate-spin" />
                                         ) : (
@@ -736,7 +762,7 @@ export const SoundUploadModal = ({ open, onOpenChange, onLocalUpload, onLibraryS
                                                         <Button
                                                             size="sm"
                                                             onClick={() => handleSelectSound(sound)}
-                                                            className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                                            className="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white"
                                                         >
                                                             <Download className="w-4 h-4 mr-2" />
                                                             Select

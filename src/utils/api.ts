@@ -36,25 +36,42 @@ export const getSignedUrl = async (token: string, path: string) => {
         headers: getHeaders(token),
         body: JSON.stringify({ path })
     });
-    if (!res.ok) throw new Error("Failed to get signed URL");
+    if (!res.ok) {
+        const errorText = await res.text();
+        // Log as warning since missing files are handled gracefully in refreshProjectUrls
+        console.warn('Could not get signed URL:', res.status, errorText, 'for path:', path);
+        throw new Error(`Failed to get signed URL: ${res.status} ${errorText}`);
+    }
     return res.json();
 };
 
 export const uploadFile = async (token: string, file: File, path: string) => {
-    // 1. Get Upload URL
-    const { url } = await getUploadUrl(token, path);
-    
-    // 2. Upload File
-    const uploadRes = await fetch(url, {
-        method: 'PUT',
-        headers: {
-            'Content-Type': file.type
-        },
-        body: file
-    });
-    
-    if (!uploadRes.ok) throw new Error("Failed to upload file");
-    return path;
+    try {
+        // 1. Get Upload URL (server returns sanitized path)
+        const { url, path: sanitizedPath } = await getUploadUrl(token, path);
+        
+        // 2. Upload File
+        const uploadRes = await fetch(url, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': file.type,
+                'x-upsert': 'true' // Allow overwriting existing files
+            },
+            body: file
+        });
+        
+        if (!uploadRes.ok) {
+            const errorText = await uploadRes.text();
+            console.error('Upload failed:', uploadRes.status, errorText);
+            throw new Error(`Failed to upload file: ${uploadRes.status} ${errorText}`);
+        }
+        
+        // Return the sanitized path that was actually used
+        return sanitizedPath;
+    } catch (error) {
+        console.error('Upload error details:', error);
+        throw error;
+    }
 };
 
 export const saveProjects = async (token: string, projects: any[]) => {

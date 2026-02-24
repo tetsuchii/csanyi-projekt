@@ -22,6 +22,25 @@ import { toast } from "sonner";
 // TYPES
 // ---------------------------------------------------------------------------
 
+// Utility function to sanitize filenames for storage
+const sanitizeFilename = (filename: string): string => {
+  // Get file extension
+  const lastDotIndex = filename.lastIndexOf('.');
+  const name = lastDotIndex !== -1 ? filename.substring(0, lastDotIndex) : filename;
+  const ext = lastDotIndex !== -1 ? filename.substring(lastDotIndex) : '';
+  
+  // Remove or replace problematic characters
+  const sanitized = name
+    .normalize('NFD') // Normalize to decomposed form
+    .replace(/[\u0300-\u036f]/g, '') // Remove diacritics/accents
+    .replace(/[\u0080-\uFFFF]/g, '') // Remove all remaining non-ASCII characters
+    .replace(/[^a-zA-Z0-9._-]/g, '_') // Replace non-alphanumeric (except .-_) with underscore
+    .replace(/_{2,}/g, '_') // Replace multiple underscores with single
+    .replace(/^_+|_+$/g, ''); // Trim underscores from start/end
+  
+  return sanitized + ext;
+};
+
 export type Point = { x: number; y: number };
 
 export type AudioSettings = {
@@ -170,7 +189,13 @@ const useAudioEngine = () => {
       if (audioContextRef.current) {
         audioContextRef.current.close();
       }
-      sourcesRef.current.forEach(({ audio }) => audio.pause());
+      sourcesRef.current.forEach(({ audio }) => {
+        try {
+          audio.pause();
+        } catch (e) {
+          console.error("Error pausing audio during cleanup:", e);
+        }
+      });
       sourcesRef.current.clear();
     };
   }, []);
@@ -220,7 +245,10 @@ const useAudioEngine = () => {
     gain.gain.setValueAtTime(0, ctx.currentTime);
     gain.gain.linearRampToValueAtTime(settings.volume, ctx.currentTime + fadeDuration);
 
-    audio.play().catch(e => console.error("Playback failed:", e));
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(e => console.error("Playback failed:", e));
+    }
     sourcesRef.current.set(id, { source, gain, panner, audio, fadeOutDuration: settings.fadeOut ?? 0.3 });
 
     audio.onended = () => {
@@ -242,7 +270,11 @@ const useAudioEngine = () => {
       node.gain.gain.linearRampToValueAtTime(0, ctx.currentTime + duration);
 
       const timer = setTimeout(() => {
-          node.audio.pause();
+          try {
+            node.audio.pause();
+          } catch (e) {
+            console.error("Error pausing audio:", e);
+          }
           try {
             node.source.disconnect();
             node.gain.disconnect();
@@ -266,7 +298,11 @@ const useAudioEngine = () => {
             node.gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.1);
 
             setTimeout(() => {
-                node.audio.pause();
+                try {
+                  node.audio.pause();
+                } catch (e) {
+                  console.error("Error pausing audio:", e);
+                }
                 try {
                     node.source.disconnect();
                     node.gain.disconnect();
@@ -332,7 +368,7 @@ const ShareDialogContent = ({ session, project }: { session: any, project: Proje
                     value={link} 
                 />
             </div>
-            <Button type="submit" size="sm" className="px-3" onClick={async () => {
+            <Button size="sm" className="px-3" onClick={async () => {
                  try {
                     await navigator.clipboard.writeText(link);
                  } catch (e) {
@@ -346,7 +382,7 @@ const ShareDialogContent = ({ session, project }: { session: any, project: Proje
                 <span className="sr-only">Copy</span>
                 <Copy className="h-4 w-4" />
             </Button>
-             <Button type="button" size="sm" variant="secondary" className="px-3" onClick={() => {
+             <Button type="button" size="sm" variant="outline" className="px-3" onClick={() => {
                  window.open(link, '_blank');
             }}>
                 <ExternalLink className="h-4 w-4" />
@@ -367,7 +403,16 @@ const SettingsPanelContent = ({
     toggleChannelPreview,
     collapsedChannels,
     toggleChannelCollapse,
-    setNarrationModalOpen
+    setNarrationModalOpen,
+    engine,
+    previewingIntroAudio,
+    toggleIntroAudioPreview,
+    introPreviewTimerRef,
+    collapsedIntroAudio,
+    toggleIntroAudioCollapse,
+    previewingZoneId,
+    toggleZonePreview,
+    setIsCanvasHighlighted
 }: {
     project: Project;
     selectedHotspotId: string | null;
@@ -381,6 +426,15 @@ const SettingsPanelContent = ({
     collapsedChannels: Set<string>;
     toggleChannelCollapse: (channelId: string) => void;
     setNarrationModalOpen: (open: boolean) => void;
+    engine: ReturnType<typeof useAudioEngine>;
+    previewingIntroAudio: boolean;
+    toggleIntroAudioPreview: () => void;
+    introPreviewTimerRef: React.MutableRefObject<NodeJS.Timeout | null>;
+    collapsedIntroAudio: boolean;
+    toggleIntroAudioCollapse: () => void;
+    previewingZoneId: string | null;
+    toggleZonePreview: (hotspot: Hotspot) => void;
+    setIsCanvasHighlighted?: (highlighted: boolean) => void;
 }) => {
     const selectedHotspot = project.hotspots.find(h => h.id === selectedHotspotId);
 
@@ -405,35 +459,62 @@ const SettingsPanelContent = ({
 
                     <div className="space-y-2">
                         <Label>Audio File</Label>
-                        <div className="bg-slate-50 border rounded-lg p-3">
-                            {selectedHotspot.audioUrl ? (
-                                <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs font-medium truncate flex-1">{selectedHotspot.audioFile?.name || "Audio File"}</span>
-                                    <Button size="sm" variant="ghost" className="h-6 w-6 text-red-500" onClick={() => onUpdate(p => ({...p, hotspots: p.hotspots.map(h => h.id === selectedHotspot.id ? {...h, audioFile: null, audioUrl: null, audioPath: null} : h)}))}><Trash2 className="w-3 h-3" /></Button>
+                        {selectedHotspot.audioUrl ? (
+                            <div className="bg-slate-50 border rounded-lg p-3">
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                        <Button
+                                            size="icon"
+                                            variant="outline"
+                                            className="h-8 w-8 shrink-0"
+                                            onClick={() => toggleZonePreview(selectedHotspot)}
+                                        >
+                                            {previewingZoneId === selectedHotspot.id ? (
+                                                <Pause className="w-4 h-4" />
+                                            ) : (
+                                                <Play className="w-4 h-4" />
+                                            )}
+                                        </Button>
+                                        <span className="truncate text-sm font-medium text-slate-700">{selectedHotspot.audioFile?.name || "Audio Track"}</span>
+                                    </div>
+                                    <Button 
+                                        size="sm" 
+                                        variant="ghost" 
+                                        className="h-6 w-6 text-red-500 shrink-0" 
+                                        onClick={() => onUpdate(p => ({...p, hotspots: p.hotspots.map(h => h.id === selectedHotspot.id ? {...h, audioFile: null, audioUrl: null, audioPath: null} : h)}))}
+                                    >
+                                        <Trash2 className="w-3 h-3" />
+                                    </Button>
                                 </div>
-                            ) : (
-                                <Button 
-                                    id="tour-zone-upload-audio"
-                                    variant="outline" 
-                                    size="sm" 
-                                    className="w-full"
-                                    onClick={() => openUploadModal('hotspot', selectedHotspot.id)}
-                                >
-                                    <Upload className="w-4 h-4 mr-2" /> Upload Audio
-                                </Button>
-                            )}
-                        </div>
+                            </div>
+                        ) : (
+                            <Button 
+                                id="tour-zone-upload-audio"
+                                variant="outline" 
+                                size="sm" 
+                                className="w-full"
+                                onClick={() => openUploadModal('hotspot', selectedHotspot.id)}
+                            >
+                                <Upload className="w-4 h-4 mr-2" /> Upload Audio
+                            </Button>
+                        )}
                     </div>
 
                     {selectedHotspot.audioUrl && (
                         <div className="space-y-6 pt-2">
+                            <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg">
+                                <div className="flex items-center gap-2">
+                                    <Repeat className="w-4 h-4 text-slate-500" />
+                                    <Label className="text-xs">Loop Audio</Label>
+                                </div>
+                                <Switch 
+                                    checked={selectedHotspot.settings.loop}
+                                    onCheckedChange={(c) => onUpdate(p => ({...p, hotspots: p.hotspots.map(h => h.id === selectedHotspot.id ? {...h, settings: {...h.settings, loop: c}} : h)}))}
+                                />
+                            </div>
                             <VolumeSlider 
                                 value={selectedHotspot.settings.volume} 
                                 onChange={(v) => onUpdate(p => ({...p, hotspots: p.hotspots.map(h => h.id === selectedHotspot.id ? {...h, settings: {...h.settings, volume: v}} : h)}))} 
-                            />
-                            <PanSlider 
-                                value={selectedHotspot.settings.pan} 
-                                onChange={(v) => onUpdate(p => ({...p, hotspots: p.hotspots.map(h => h.id === selectedHotspot.id ? {...h, settings: {...h.settings, pan: v}} : h)}))} 
                             />
                             <div className="grid grid-cols-2 gap-4">
                                 <FadeSlider 
@@ -447,25 +528,19 @@ const SettingsPanelContent = ({
                                     onChange={(v) => onUpdate(p => ({...p, hotspots: p.hotspots.map(h => h.id === selectedHotspot.id ? {...h, settings: {...h.settings, fadeOut: v}} : h)}))} 
                                 />
                             </div>
-                            <div className="flex items-center justify-between bg-slate-50 p-3 rounded-lg">
-                                <div className="flex items-center gap-2">
-                                    <Repeat className="w-4 h-4 text-slate-500" />
-                                    <Label className="text-xs">Loop Audio</Label>
-                                </div>
-                                <Switch 
-                                    checked={selectedHotspot.settings.loop}
-                                    onCheckedChange={(c) => onUpdate(p => ({...p, hotspots: p.hotspots.map(h => h.id === selectedHotspot.id ? {...h, settings: {...h.settings, loop: c}} : h)}))}
-                                />
-                            </div>
+                            <PanSlider 
+                                value={selectedHotspot.settings.pan} 
+                                onChange={(v) => onUpdate(p => ({...p, hotspots: p.hotspots.map(h => h.id === selectedHotspot.id ? {...h, settings: {...h.settings, pan: v}} : h)}))} 
+                            />
                         </div>
                     )}
                         
                         <div className="pt-6 border-t space-y-3">
-                        <Button id="tour-zone-done-btn" className="w-full" onClick={() => setSelectedHotspotId(null)}>
+                        <Button id="tour-zone-done-btn" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white" onClick={() => setSelectedHotspotId(null)}>
                             <Check className="w-4 h-4 mr-2" /> Done
                         </Button>
-                        <Button variant="ghost" className="w-full text-red-500 hover:text-red-600 hover:bg-red-50" onClick={() => { onUpdate(p => ({...p, hotspots: p.hotspots.filter(h => h.id !== selectedHotspot.id)})); setSelectedHotspotId(null); }}>
-                            Delete Zone
+                        <Button variant="destructive" className="w-full" onClick={() => { onUpdate(p => ({...p, hotspots: p.hotspots.filter(h => h.id !== selectedHotspot.id)})); setSelectedHotspotId(null); }}>
+                            <Trash2 className="w-4 h-4 mr-2" /> Delete Zone
                         </Button>
                         </div>
                 </div>
@@ -479,35 +554,131 @@ const SettingsPanelContent = ({
                 <h2 className="font-bold text-lg mb-4">Project Settings</h2>
                 
                 <div className="space-y-4 mb-6" id="tour-intro-audio">
-                    <Label className="text-slate-500 text-xs uppercase tracking-wider font-bold">Start Screen Narration</Label>
-                    <div className="bg-slate-50 border rounded-lg p-4 space-y-3">
-                        {project.introAudioUrl ? (
-                            <div className="flex items-center gap-3 bg-white p-2 rounded border">
-                                <Music className="w-4 h-4 text-indigo-600" />
-                                <span className="text-xs font-medium truncate flex-1">{project.introAudioFile?.name || "Narration"}</span>
-                                <Button size="icon" variant="ghost" className="h-6 w-6 text-red-500" onClick={() => onUpdate(p => ({...p, introAudioFile: null, introAudioUrl: null, introAudioPath: null}))}><X className="w-3 h-3" /></Button>
+                    <Label className="text-slate-500 text-xs uppercase tracking-wider font-bold">Screen Narration</Label>
+                    
+                    {!project.introAudioUrl ? (
+                        <div 
+                            className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center hover:border-indigo-300 transition-colors cursor-pointer" 
+                            onClick={() => setNarrationModalOpen(true)}
+                        >
+                            <div className="mx-auto w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mb-2 text-slate-400">
+                                <Plus className="w-5 h-5" />
                             </div>
-                        ) : (
-                            <Button 
-                                variant="outline" 
-                                size="sm" 
-                                className="w-full"
-                                onClick={() => setNarrationModalOpen(true)}
-                            >
-                                <Upload className="w-3 h-3 mr-2" /> Upload Narration
-                            </Button>
-                        )}
-                        
-                        {project.introAudioUrl && (
-                            <div className="flex items-center justify-between px-1">
-                                <Label className="text-xs text-slate-500">Loop Narration</Label>
-                                <Switch 
-                                    checked={project.introAudioLoop}
-                                    onCheckedChange={(c) => onUpdate(p => ({...p, introAudioLoop: c}))}
-                                />
+                            <p className="text-sm font-medium text-slate-600">Add Narration</p>
+                            <p className="text-xs text-slate-400 mt-1">Introduce your sound map with audio</p>
+                        </div>
+                    ) : (
+                        <div 
+                            className={`bg-white border rounded-lg p-3 shadow-sm ${collapsedIntroAudio ? 'cursor-pointer hover:border-indigo-300 transition-colors' : ''}`}
+                            onClick={collapsedIntroAudio ? toggleIntroAudioCollapse : undefined}
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <div 
+                                    className="flex items-center gap-2 flex-1 cursor-pointer min-w-0"
+                                    onClick={!collapsedIntroAudio ? toggleIntroAudioCollapse : (e) => e.stopPropagation()}
+                                >
+                                    <Button 
+                                        size="icon" 
+                                        variant="ghost" 
+                                        className="h-6 w-6 shrink-0 text-slate-400 hover:text-slate-600"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleIntroAudioCollapse();
+                                        }}
+                                    >
+                                        {collapsedIntroAudio ? (
+                                            <ChevronDown className="w-4 h-4" />
+                                        ) : (
+                                            <ChevronUp className="w-4 h-4" />
+                                        )}
+                                    </Button>
+                                    <Input 
+                                        className="h-7 text-sm font-medium border-none flex-1 min-w-0 focus-visible:ring-0" 
+                                        value={project.introAudioFile?.name || "Narration"}
+                                        onChange={(e) => {
+                                            e.stopPropagation();
+                                            onUpdate(p => ({
+                                                ...p,
+                                                introAudioFile: { ...(p.introAudioFile || {}), name: e.target.value } as any
+                                            }));
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                    />
+                                </div>
+                                <Button 
+                                    size="icon" 
+                                    variant="ghost" 
+                                    className="h-6 w-6 text-slate-400 hover:text-red-500 shrink-0" 
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (previewingIntroAudio) {
+                                            engine.stop('preview-intro');
+                                            setPreviewingIntroAudio(false);
+                                            if (introPreviewTimerRef.current) {
+                                                clearTimeout(introPreviewTimerRef.current);
+                                                introPreviewTimerRef.current = null;
+                                            }
+                                        }
+                                        onUpdate(p => ({...p, introAudioFile: null, introAudioUrl: null, introAudioPath: null}));
+                                    }}
+                                >
+                                    <X className="w-3 h-3" />
+                                </Button>
                             </div>
-                        )}
-                    </div>
+
+                            {!collapsedIntroAudio && (
+                                <div className="space-y-3 mt-3">
+                                    <div className="rounded-[0px] px-[0px] pt-[12px] pb-[0px]">
+                                        <div className="flex items-center justify-between gap-3 mb-3">
+                                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                <Button
+                                                    size="icon"
+                                                    variant="outline"
+                                                    className="h-8 w-8 shrink-0"
+                                                    onClick={toggleIntroAudioPreview}
+                                                >
+                                                    {previewingIntroAudio ? (
+                                                        <Pause className="w-4 h-4" />
+                                                    ) : (
+                                                        <Play className="w-4 h-4" />
+                                                    )}
+                                                </Button>
+                                                <span className="text-sm font-medium text-slate-700">Audio Track</span>
+                                            </div>
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                <span className="text-xs font-medium text-slate-600">Loop</span>
+                                                <Switch 
+                                                    checked={project.introAudioLoop}
+                                                    onCheckedChange={(c) => onUpdate(p => ({...p, introAudioLoop: c}))}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <Button 
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setNarrationModalOpen(true);
+                                        }}
+                                    >
+                                        <Upload className="w-3 h-3 mr-2" /> Change Audio
+                                    </Button>
+                                    <Button 
+                                        size="sm"
+                                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleIntroAudioCollapse();
+                                        }}
+                                    >
+                                        Save
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <div className="mb-6" id="tour-add-channel">
@@ -529,16 +700,24 @@ const SettingsPanelContent = ({
                         {(project.globalChannels || []).map(channel => {
                             const isCollapsed = collapsedChannels.has(channel.id);
                             return (
-                            <div key={channel.id} className="bg-white border rounded-lg p-3 shadow-sm">
+                            <div 
+                                key={channel.id} 
+                                className={`bg-white border rounded-lg p-3 shadow-sm ${isCollapsed ? 'cursor-pointer hover:border-indigo-300 transition-colors' : ''}`}
+                                onClick={isCollapsed ? () => toggleChannelCollapse(channel.id) : undefined}
+                            >
                                 <div className="flex items-center justify-between gap-2">
                                     <div 
                                         className="flex items-center gap-2 flex-1 cursor-pointer min-w-0"
-                                        onClick={() => toggleChannelCollapse(channel.id)}
+                                        onClick={!isCollapsed ? () => toggleChannelCollapse(channel.id) : (e) => e.stopPropagation()}
                                     >
                                         <Button 
                                             size="icon" 
                                             variant="ghost" 
                                             className="h-6 w-6 shrink-0 text-slate-400 hover:text-slate-600"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleChannelCollapse(channel.id);
+                                            }}
                                         >
                                             {isCollapsed ? (
                                                 <ChevronDown className="w-4 h-4" />
@@ -563,7 +742,10 @@ const SettingsPanelContent = ({
                                         size="icon" 
                                         variant="ghost" 
                                         className="h-6 w-6 text-slate-400 hover:text-red-500 shrink-0" 
-                                        onClick={() => onUpdate(p => ({...p, globalChannels: p.globalChannels.filter(c => c.id !== channel.id)}))}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onUpdate(p => ({...p, globalChannels: p.globalChannels.filter(c => c.id !== channel.id)}));
+                                        }}
                                     >
                                         <X className="w-3 h-3" />
                                     </Button>
@@ -579,39 +761,36 @@ const SettingsPanelContent = ({
                                         <Upload className="w-3 h-3 mr-2" /> Upload Audio
                                     </Button>
                                 ) : (
-                                    <div className="space-y-4">
-                                        <div className="text-xs text-slate-500 flex items-center justify-between gap-2">
-                                            <div className="flex items-center gap-2 min-w-0">
-                                                <Button
-                                                    size="icon"
-                                                    variant="ghost"
-                                                    className="h-7 w-7 shrink-0"
-                                                    onClick={() => toggleChannelPreview(channel)}
-                                                >
-                                                    {previewingChannelId === channel.id ? (
-                                                        <Pause className="w-3.5 h-3.5" />
-                                                    ) : (
-                                                        <Play className="w-3.5 h-3.5" />
-                                                    )}
-                                                </Button>
-                                                <span className="truncate">{channel.audioFile?.name || "Audio Track"}</span>
-                                            </div>
-                                            <div className="flex items-center gap-1.5 shrink-0">
-                                                <span className="text-[10px]">Loop</span>
-                                                <Switch 
-                                                    className="scale-75 origin-right"
-                                                    checked={channel.settings.loop}
-                                                    onCheckedChange={(c) => onUpdate(p => ({...p, globalChannels: p.globalChannels.map(ch => ch.id === channel.id ? {...ch, settings: {...ch.settings, loop: c}} : ch)}))}
-                                                />
+                                    <div className="space-y-3 mt-3">
+                                        <div className="rounded-[0px] px-[0px] pt-[12px] pb-[0px]">
+                                            <div className="flex items-center justify-between gap-3 mb-3">
+                                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                                    <Button
+                                                        size="icon"
+                                                        variant="outline"
+                                                        className="h-8 w-8 shrink-0"
+                                                        onClick={() => toggleChannelPreview(channel)}
+                                                    >
+                                                        {previewingChannelId === channel.id ? (
+                                                            <Pause className="w-4 h-4" />
+                                                        ) : (
+                                                            <Play className="w-4 h-4" />
+                                                        )}
+                                                    </Button>
+                                                    <span className="truncate text-sm font-medium text-slate-700">{channel.audioFile?.name || "Audio Track"}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <span className="text-xs font-medium text-slate-600">Loop</span>
+                                                    <Switch 
+                                                        checked={channel.settings.loop}
+                                                        onCheckedChange={(c) => onUpdate(p => ({...p, globalChannels: p.globalChannels.map(ch => ch.id === channel.id ? {...ch, settings: {...ch.settings, loop: c}} : ch)}))}
+                                                    />
+                                                </div>
                                             </div>
                                         </div>
                                         <VolumeSlider 
                                             value={channel.settings.volume} 
                                             onChange={(v) => onUpdate(p => ({...p, globalChannels: p.globalChannels.map(ch => ch.id === channel.id ? {...ch, settings: {...ch.settings, volume: v}} : ch)}))} 
-                                        />
-                                        <PanSlider 
-                                            value={channel.settings.pan} 
-                                            onChange={(v) => onUpdate(p => ({...p, globalChannels: p.globalChannels.map(ch => ch.id === channel.id ? {...ch, settings: {...ch.settings, pan: v}} : ch)}))} 
                                         />
                                         <div className="grid grid-cols-2 gap-4">
                                             <FadeSlider 
@@ -625,6 +804,25 @@ const SettingsPanelContent = ({
                                                 onChange={(v) => onUpdate(p => ({...p, globalChannels: p.globalChannels.map(ch => ch.id === channel.id ? {...ch, settings: {...ch.settings, fadeOut: v}} : ch)}))} 
                                             />
                                         </div>
+                                        <PanSlider 
+                                            value={channel.settings.pan} 
+                                            onChange={(v) => onUpdate(p => ({...p, globalChannels: p.globalChannels.map(ch => ch.id === channel.id ? {...ch, settings: {...ch.settings, pan: v}} : ch)}))} 
+                                        />
+                                        <Button 
+                                            variant="outline"
+                                            size="sm"
+                                            className="w-full"
+                                            onClick={() => openUploadModal('channel', channel.id)}
+                                        >
+                                            <Upload className="w-3 h-3 mr-2" /> Change Audio
+                                        </Button>
+                                        <Button 
+                                            size="sm"
+                                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white"
+                                            onClick={() => toggleChannelCollapse(channel.id)}
+                                        >
+                                            Save
+                                        </Button>
                                     </div>
                                 ))}
                             </div>
@@ -637,15 +835,34 @@ const SettingsPanelContent = ({
                     <div className="flex items-center justify-between mb-4">
                         <Label className="text-slate-500 text-xs uppercase tracking-wider font-bold">Zone Inventory ({project.hotspots.length})</Label>
                     </div>
-                    <div className="bg-slate-50 border rounded-lg overflow-hidden max-h-60 overflow-y-auto">
-                        {project.hotspots.length === 0 ? (
-                            <p className="text-xs text-slate-400 p-4 text-center italic">Draw on the image to create zones.</p>
-                        ) : (
+                    {project.hotspots.length === 0 ? (
+                        <div 
+                            className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center hover:border-indigo-300 transition-colors cursor-pointer"
+                            onClick={() => {
+                                if (setIsCanvasHighlighted) {
+                                    setIsCanvasHighlighted(true);
+                                    // Scroll canvas into view smoothly
+                                    const canvasElement = document.getElementById('tour-canvas-area');
+                                    if (canvasElement) {
+                                        canvasElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                    }
+                                }
+                            }}
+                        >
+                            <div className="mx-auto w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center mb-2 text-slate-400">
+                                <Plus className="w-5 h-5" />
+                            </div>
+                            <p className="text-sm font-medium text-slate-600">Add Zones</p>
+                            <p className="text-xs text-slate-400 mt-1">Draw on the image to create zones</p>
+                        </div>
+                    ) : (
+                        <div className="bg-slate-50 border rounded-lg overflow-hidden max-h-60 overflow-y-auto">
                             <div className="divide-y divide-slate-200">
                                 {project.hotspots.map(h => (
                                     <div 
                                         key={h.id}
-                                        className="flex items-center gap-3 p-3 hover:bg-white hover:text-indigo-600 cursor-pointer transition-colors text-sm text-slate-700"
+                                        tabIndex={0}
+                                        className="flex items-center gap-3 p-3 hover:bg-white hover:text-indigo-600 cursor-pointer transition-colors text-sm text-slate-700 focus-visible:bg-indigo-50 focus-visible:text-indigo-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600"
                                         onClick={() => setSelectedHotspotId(h.id)}
                                     >
                                         <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: h.color }} />
@@ -654,8 +871,8 @@ const SettingsPanelContent = ({
                                     </div>
                                 ))}
                             </div>
-                        )}
-                    </div>
+                        </div>
+                    )}
                 </div>
 
             </div>
@@ -666,26 +883,56 @@ const SettingsPanelContent = ({
 const refreshProjectUrls = async (project: Project, token: string): Promise<Project> => {
     const p = { ...project };
     
+    // Helper to sanitize a full path (including userId/projectId/filename)
+    const sanitizeStoragePath = (path: string): string => {
+        const parts = path.split('/');
+        return parts.map((part, index) => {
+            // Don't sanitize user ID and project ID (first two parts)
+            if (index < 2) return part;
+            // Sanitize the filename part
+            return sanitizeFilename(part);
+        }).join('/');
+    };
+    
     if (p.imagePath) {
         try {
-            const { url } = await getSignedUrl(token, p.imagePath);
+            const sanitizedPath = sanitizeStoragePath(p.imagePath);
+            const { url } = await getSignedUrl(token, sanitizedPath);
             p.imageUrl = url;
-        } catch (e) { console.error("Failed to refresh image url", e); }
+            p.imagePath = sanitizedPath; // Update to sanitized path
+        } catch (e) { 
+            console.warn(`Background image not found in storage, clearing reference: ${p.imagePath}`);
+            // Clear invalid references
+            p.imagePath = undefined;
+            p.imageUrl = undefined;
+        }
     }
     
     if (p.introAudioPath) {
         try {
-            const { url } = await getSignedUrl(token, p.introAudioPath);
+            const sanitizedPath = sanitizeStoragePath(p.introAudioPath);
+            const { url } = await getSignedUrl(token, sanitizedPath);
             p.introAudioUrl = url;
-        } catch (e) { console.error("Failed to refresh intro url", e); }
+            p.introAudioPath = sanitizedPath; // Update to sanitized path
+        } catch (e) { 
+            console.warn(`Intro audio not found in storage, clearing reference: ${p.introAudioPath}`);
+            // Clear invalid references
+            p.introAudioPath = undefined;
+            p.introAudioUrl = undefined;
+        }
     }
     
     p.hotspots = await Promise.all(p.hotspots.map(async h => {
         if (h.audioPath) {
             try {
-                const { url } = await getSignedUrl(token, h.audioPath);
-                return { ...h, audioUrl: url };
-            } catch (e) { return h; }
+                const sanitizedPath = sanitizeStoragePath(h.audioPath);
+                const { url } = await getSignedUrl(token, sanitizedPath);
+                return { ...h, audioUrl: url, audioPath: sanitizedPath };
+            } catch (e) { 
+                console.warn(`Hotspot audio not found in storage, clearing reference: ${h.audioPath}`);
+                // Return hotspot without audio references
+                return { ...h, audioPath: undefined, audioUrl: undefined };
+            }
         }
         return h;
     }));
@@ -693,9 +940,14 @@ const refreshProjectUrls = async (project: Project, token: string): Promise<Proj
     p.globalChannels = await Promise.all((p.globalChannels || []).map(async c => {
         if (c.audioPath) {
              try {
-                const { url } = await getSignedUrl(token, c.audioPath);
-                return { ...c, audioUrl: url };
-             } catch (e) { return c; }
+                const sanitizedPath = sanitizeStoragePath(c.audioPath);
+                const { url } = await getSignedUrl(token, sanitizedPath);
+                return { ...c, audioUrl: url, audioPath: sanitizedPath };
+             } catch (e) { 
+                console.warn(`Background channel audio not found in storage, clearing reference: ${c.audioPath}`);
+                // Return channel without audio references
+                return { ...c, audioPath: undefined, audioUrl: undefined };
+             }
         }
         return c;
     }));
@@ -715,14 +967,14 @@ const TOUR_STEPS: TourStep[] = [
         id: 'upload-image',
         targetId: 'tour-upload-image',
         title: 'Upload Your Base Image',
-        description: 'Upload the image you want to make interactive. This could be a map, artwork, or any image where you want to create audio zones.',
+        description: 'Upload the image you want to make interactive. This could be a floorplan, a map, artwork, or any image where you want to create audio zones.',
         placement: 'bottom'
     },
     {
         id: 'draw-zones',
         targetId: 'tour-canvas-area',
         title: 'Draw Audio Zones',
-        description: 'Click and hold on the image to draw a polygon around an interactive area. Release the mouse to finish. Each zone can have its own audio.',
+        description: 'Click on your image to draw polygons around areas you want to make interactive. Each zone can have its own audio. Click multiple points to create the shape, then click near the starting point to close it.',
         placement: 'left'
     },
     {
@@ -736,7 +988,7 @@ const TOUR_STEPS: TourStep[] = [
         id: 'zone-upload-audio',
         targetId: 'tour-zone-upload-audio',
         title: 'Add Audio to Zone',
-        description: 'Now add an audio file to this zone. Click "Upload Audio" to choose a file from your computer or browse sounds from the library or record with your microphone.',
+        description: 'Now add an audio file to this zone. Click "Upload Audio" to choose a file from your computer or browse sounds from the library.',
         placement: 'left'
     },
     {
@@ -749,7 +1001,7 @@ const TOUR_STEPS: TourStep[] = [
     {
         id: 'intro-audio',
         targetId: 'tour-intro-audio',
-        title: 'Start Screen Narration',
+        title: 'Screen Narration',
         description: 'Add a narration that plays on the start screen before users interact. This is perfect for setting context and providing instructions.',
         placement: 'left'
     },
@@ -867,6 +1119,25 @@ export const SoundMapApp = () => {
           loadProjects(session.access_token).then(async (loaded: Project[]) => {
               const hydrated = await Promise.all(loaded.map(p => refreshProjectUrls(p, session.access_token)));
               setProjects(hydrated);
+              
+              // Check if any projects were cleaned up (had invalid paths removed)
+              const needsSaving = hydrated.some((hydratedProj, idx) => {
+                  const originalProj = loaded[idx];
+                  return (
+                      (originalProj.imagePath && !hydratedProj.imagePath) ||
+                      (originalProj.introAudioPath && !hydratedProj.introAudioPath) ||
+                      originalProj.hotspots.some((h: any, i: number) => h.audioPath && !hydratedProj.hotspots[i]?.audioPath) ||
+                      (originalProj.globalChannels || []).some((c: any, i: number) => c.audioPath && !(hydratedProj.globalChannels || [])[i]?.audioPath)
+                  );
+              });
+              
+              // Auto-save to clean up invalid references in the database
+              if (needsSaving) {
+                  console.log('Auto-saving projects to clean up invalid file references');
+                  saveProjects(session.access_token, hydrated).catch(err => 
+                      console.error('Failed to auto-save cleaned projects:', err)
+                  );
+              }
           }).catch(console.error)
             .finally(() => setIsLoadingProjects(false));
 
@@ -950,16 +1221,42 @@ export const SoundMapApp = () => {
           }));
           try { await uploadFile(session.access_token, file, path); } catch(e) { console.error(e); }
       } else if (uploadTarget.type === 'channel') {
-          const path = `${session.user.id}/${currentProject.id}/gc_${uploadTarget.id}_${Date.now()}.mp3`;
-          handleUpdateProject(p => ({
-              ...p,
-              globalChannels: p.globalChannels.map(c => 
-                  c.id === uploadTarget.id 
-                      ? {...c, audioFile: file, audioUrl: URL.createObjectURL(file), audioPath: path} 
-                      : c
-              )
-          }));
-          try { await uploadFile(session.access_token, file, path); } catch(e) { console.error(e); }
+          if (uploadTarget.id === 'new') {
+              // Create a new channel when uploading
+              const newChannel: GlobalChannel = {
+                  id: crypto.randomUUID(),
+                  name: file.name.split('.')[0] || `Channel ${(currentProject.globalChannels || []).length + 1}`,
+                  audioFile: null,
+                  audioUrl: null,
+                  settings: { volume: 0.5, pan: 0, loop: true, fadeIn: 2.0, fadeOut: 2.0 }
+              };
+              const path = `${session.user.id}/${currentProject.id}/gc_${newChannel.id}_${Date.now()}.mp3`;
+              
+              // Add the new channel to collapsed state
+              setCollapsedChannels(prev => new Set([...prev, newChannel.id]));
+              
+              handleUpdateProject(p => ({
+                  ...p,
+                  globalChannels: [...(p.globalChannels || []), {
+                      ...newChannel,
+                      audioFile: file,
+                      audioUrl: URL.createObjectURL(file),
+                      audioPath: path
+                  }]
+              }));
+              try { await uploadFile(session.access_token, file, path); } catch(e) { console.error(e); }
+          } else {
+              const path = `${session.user.id}/${currentProject.id}/gc_${uploadTarget.id}_${Date.now()}.mp3`;
+              handleUpdateProject(p => ({
+                  ...p,
+                  globalChannels: p.globalChannels.map(c => 
+                      c.id === uploadTarget.id 
+                          ? {...c, audioFile: file, audioUrl: URL.createObjectURL(file), audioPath: path} 
+                          : c
+                  )
+              }));
+              try { await uploadFile(session.access_token, file, path); } catch(e) { console.error(e); }
+          }
       }
   };
 
@@ -988,17 +1285,45 @@ export const SoundMapApp = () => {
               }));
               await uploadFile(session.access_token, file, path);
           } else if (uploadTarget.type === 'channel') {
-              const path = `${session.user.id}/${currentProject.id}/gc_${uploadTarget.id}_${Date.now()}.mp3`;
-              const audioUrl = sound.previews['preview-hq-mp3'] || sound.previews['preview-lq-mp3'];
-              handleUpdateProject(p => ({
-                  ...p,
-                  globalChannels: p.globalChannels.map(c => 
-                      c.id === uploadTarget.id 
-                          ? {...c, audioFile: file, audioUrl: audioUrl, audioPath: path, name: sound.name} 
-                          : c
-                  )
-              }));
-              await uploadFile(session.access_token, file, path);
+              if (uploadTarget.id === 'new') {
+                  // Create a new channel when selecting from library
+                  const newChannel: GlobalChannel = {
+                      id: crypto.randomUUID(),
+                      name: sound.name || `Channel ${(currentProject.globalChannels || []).length + 1}`,
+                      audioFile: null,
+                      audioUrl: null,
+                      settings: { volume: 0.5, pan: 0, loop: true, fadeIn: 2.0, fadeOut: 2.0 }
+                  };
+                  const path = `${session.user.id}/${currentProject.id}/gc_${newChannel.id}_${Date.now()}.mp3`;
+                  const audioUrl = sound.previews['preview-hq-mp3'] || sound.previews['preview-lq-mp3'];
+                  
+                  // Add the new channel to collapsed state
+                  setCollapsedChannels(prev => new Set([...prev, newChannel.id]));
+                  
+                  handleUpdateProject(p => ({
+                      ...p,
+                      globalChannels: [...(p.globalChannels || []), {
+                          ...newChannel,
+                          audioFile: file,
+                          audioUrl: audioUrl,
+                          audioPath: path,
+                          name: sound.name
+                      }]
+                  }));
+                  await uploadFile(session.access_token, file, path);
+              } else {
+                  const path = `${session.user.id}/${currentProject.id}/gc_${uploadTarget.id}_${Date.now()}.mp3`;
+                  const audioUrl = sound.previews['preview-hq-mp3'] || sound.previews['preview-lq-mp3'];
+                  handleUpdateProject(p => ({
+                      ...p,
+                      globalChannels: p.globalChannels.map(c => 
+                          c.id === uploadTarget.id 
+                              ? {...c, audioFile: file, audioUrl: audioUrl, audioPath: path, name: sound.name} 
+                              : c
+                      )
+                  }));
+                  await uploadFile(session.access_token, file, path);
+              }
           }
       } catch(e) {
           console.error('Failed to download sound:', e);
@@ -1196,7 +1521,7 @@ export const SoundMapApp = () => {
                             if (showOnboarding && tourStepIndex === 4) setTourStepIndex(5);
                             setView('player');
                         }}
-                        className="bg-indigo-600 hover:bg-indigo-700"
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white"
                     >
                         Preview Anyway
                     </AlertDialogAction>
@@ -1278,7 +1603,7 @@ const GalleryView = ({ projects, onCreate, onSelect, onDelete, onProfile, isLoad
                                     </AlertDialogHeader>
                                     <AlertDialogFooter>
                                         <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                        <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={() => onDelete(project.id)}>Delete</AlertDialogAction>
+                                        <AlertDialogAction className="bg-red-600 hover:bg-red-700 text-white" onClick={() => onDelete(project.id)}>Delete</AlertDialogAction>
                                     </AlertDialogFooter>
                                 </AlertDialogContent>
                             </AlertDialog>
@@ -1370,23 +1695,54 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
   // Overlap warning state
   const [showOverlapWarning, setShowOverlapWarning] = useState(false);
   
+  // Canvas highlight state for "Add Zones" prompt
+  const [isCanvasHighlighted, setIsCanvasHighlighted] = useState(false);
+  
   const engine = useAudioEngine();
   
   // Preview channel state
   const [previewingChannelId, setPreviewingChannelId] = useState<string | null>(null);
   const previewTimerRef = useRef<NodeJS.Timeout | null>(null);
   
+  // Preview zone audio state
+  const [previewingZoneId, setPreviewingZoneId] = useState<string | null>(null);
+  const zonePreviewTimerRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Preview intro audio state
+  const [previewingIntroAudio, setPreviewingIntroAudio] = useState(false);
+  const introPreviewTimerRef = useRef<NodeJS.Timeout | null>(null);
+  
   // Collapsed channels state (all collapsed by default)
   const [collapsedChannels, setCollapsedChannels] = useState<Set<string>>(new Set());
   
+  // Collapsed intro audio state
+  const [collapsedIntroAudio, setCollapsedIntroAudio] = useState(true);
+  
+  // Focused zone state for keyboard navigation
+  const [focusedZoneId, setFocusedZoneId] = useState<string | null>(null);
+  
   const imageContainerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Collapse all background channels when project loads or changes
+  useEffect(() => {
+      if (project?.globalChannels) {
+          const allChannelIds = project.globalChannels.map(c => c.id);
+          setCollapsedChannels(new Set(allChannelIds));
+      }
+  }, [project?.id]); // Only run when project ID changes
 
   // Clean up preview timer on unmount
   useEffect(() => {
       return () => {
           if (previewTimerRef.current) {
               clearTimeout(previewTimerRef.current);
+          }
+          if (zonePreviewTimerRef.current) {
+              clearTimeout(zonePreviewTimerRef.current);
+          }
+          if (introPreviewTimerRef.current) {
+              clearTimeout(introPreviewTimerRef.current);
           }
       };
   }, []);
@@ -1461,20 +1817,83 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
       }
   };
 
+  const toggleIntroAudioPreview = () => {
+      if (!project.introAudioUrl) return;
+      
+      const previewId = 'preview-intro';
+      
+      if (previewingIntroAudio) {
+          engine.stop(previewId);
+          setPreviewingIntroAudio(false);
+          if (introPreviewTimerRef.current) {
+              clearTimeout(introPreviewTimerRef.current);
+              introPreviewTimerRef.current = null;
+          }
+      } else {
+          engine.play(previewId, project.introAudioUrl, { volume: 1, pan: 0, loop: false, fadeIn: 0, fadeOut: 0 });
+          setPreviewingIntroAudio(true);
+          
+          // Auto-stop after 5 seconds
+          introPreviewTimerRef.current = setTimeout(() => {
+              engine.stop(previewId);
+              setPreviewingIntroAudio(false);
+              introPreviewTimerRef.current = null;
+          }, 5000);
+      }
+  };
+
+  const toggleZonePreview = (hotspot: Hotspot) => {
+      if (!hotspot.audioUrl) return;
+      
+      const previewId = `preview-zone-${hotspot.id}`;
+      
+      if (previewingZoneId === hotspot.id) {
+          engine.stop(previewId);
+          setPreviewingZoneId(null);
+          if (zonePreviewTimerRef.current) {
+              clearTimeout(zonePreviewTimerRef.current);
+              zonePreviewTimerRef.current = null;
+          }
+      } else {
+          // Stop any currently playing preview
+          if (previewingZoneId) {
+              engine.stop(`preview-zone-${previewingZoneId}`);
+          }
+          if (zonePreviewTimerRef.current) {
+              clearTimeout(zonePreviewTimerRef.current);
+          }
+          
+          engine.play(previewId, hotspot.audioUrl, hotspot.settings);
+          setPreviewingZoneId(hotspot.id);
+          
+          // Auto-stop after 5 seconds
+          zonePreviewTimerRef.current = setTimeout(() => {
+              engine.stop(previewId);
+              setPreviewingZoneId(null);
+              zonePreviewTimerRef.current = null;
+          }, 5000);
+      }
+  };
+
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       const url = URL.createObjectURL(file);
-      const path = `${session.user.id}/${project.id}/bg_${Date.now()}_${file.name}`;
+      const sanitizedName = sanitizeFilename(file.name);
+      const path = `${session.user.id}/${project.id}/bg_${Date.now()}_${sanitizedName}`;
       
-      // Optimistic update
+      // Optimistic update with temporary path
       onUpdate(prev => ({ ...prev, imageFile: file, imageUrl: url, hotspots: [], imagePath: path }));
       
       try {
-          await uploadFile(session.access_token, file, path);
+          // Upload returns the actual sanitized path used by the server
+          const actualPath = await uploadFile(session.access_token, file, path);
+          // Update with the actual path returned from server
+          onUpdate(prev => ({ ...prev, imagePath: actualPath }));
+          toast.success('Image uploaded successfully');
       } catch (e) {
           console.error("Image upload failed", e);
-          // Ideally show toast
+          toast.error('Image upload failed. Please try again.');
       }
     }
   };
@@ -1494,6 +1913,7 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
     if (!project.imageUrl) return;
     if ((e.target as Element).tagName === 'polygon') return;
     setIsDrawing(true);
+    setIsCanvasHighlighted(false); // Clear highlight when starting to draw
     const point = getRelativeCoordinates(e);
     setCurrentPoints([point]);
     handleSetSelectedHotspotId(null);
@@ -1540,15 +1960,8 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
   };
 
   const addGlobalChannel = () => {
-      const newChannel: GlobalChannel = {
-          id: crypto.randomUUID(),
-          name: `Channel ${(project.globalChannels || []).length + 1}`,
-          audioFile: null,
-          audioUrl: null,
-          settings: { volume: 0.5, pan: 0, loop: true, fadeIn: 2.0, fadeOut: 2.0 }
-      };
-      onUpdate({ ...project, globalChannels: [...(project.globalChannels || []), newChannel] });
-      // Keep new channel expanded by default (don't add to collapsed set)
+      // Instead of creating the channel immediately, just open the modal with a special marker
+      openUploadModal('channel', 'new');
   };
   
   const toggleChannelCollapse = (channelId: string) => {
@@ -1561,6 +1974,10 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
           }
           return next;
       });
+  };
+
+  const toggleIntroAudioCollapse = () => {
+      setCollapsedIntroAudio(prev => !prev);
   };
 
   return (
@@ -1577,7 +1994,7 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
         <div className="flex items-center gap-3">
             <Dialog>
                 <DialogTrigger asChild>
-                     <Button variant="outline" size="sm" className="hidden sm:flex" id="tour-share-btn" onClick={onShare}>
+                     <Button variant="outline" size="sm" className="hidden sm:flex h-9" id="tour-share-btn" onClick={onShare}>
                         <Share2 className="w-4 h-4 mr-2" /> Share
                      </Button>
                 </DialogTrigger>
@@ -1590,7 +2007,7 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                 </DialogContent>
             </Dialog>
 
-            <Button id="tour-preview-btn" onClick={onPreview} className="bg-indigo-600 text-white shrink-0 h-9 w-9 sm:w-auto sm:px-4 p-0 flex items-center justify-center" disabled={!project.imageUrl}>
+            <Button id="tour-preview-btn" onClick={onPreview} className="bg-indigo-600 hover:bg-indigo-700 text-white shrink-0 h-9 w-9 sm:w-auto sm:px-4 p-0 flex items-center justify-center" disabled={!project.imageUrl}>
                 <Play className="w-4 h-4 sm:mr-2" /> 
                 <span className="hidden sm:inline">Preview</span>
             </Button>
@@ -1613,7 +2030,11 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                 <div 
                     id="tour-canvas-area"
                     ref={imageContainerRef}
-                    className="relative shadow-2xl"
+                    className={`relative shadow-2xl transition-all duration-500 ${
+                        isCanvasHighlighted 
+                            ? 'ring-4 ring-indigo-500 ring-offset-4 ring-offset-slate-100' 
+                            : ''
+                    }`}
                     onMouseDown={handleStartDrawing}
                     onMouseMove={handleDrawMove}
                     onMouseUp={handleStopDrawing}
@@ -1627,9 +2048,15 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                                 points={pointsToSvgPath(h.points)}
                                 fill={selectedHotspotId === h.id ? h.color : h.color}
                                 fillOpacity={selectedHotspotId === h.id ? 0.5 : 0.25}
-                                stroke={selectedHotspotId === h.id ? "white" : h.color}
-                                strokeWidth={selectedHotspotId === h.id ? "0.8" : "0.4"}
-                                style={{ pointerEvents: 'all', cursor: 'pointer', vectorEffect: 'non-scaling-stroke' }}
+                                stroke={selectedHotspotId === h.id ? "white" : (focusedZoneId === h.id ? "white" : h.color)}
+                                strokeWidth={selectedHotspotId === h.id ? "0.8" : (focusedZoneId === h.id ? "1.2" : "0.4")}
+                                style={{ 
+                                    pointerEvents: 'all', 
+                                    cursor: 'pointer', 
+                                    vectorEffect: 'non-scaling-stroke',
+                                    filter: focusedZoneId === h.id ? 'drop-shadow(0 0 10px rgba(255, 255, 255, 0.9))' : 'none',
+                                    outline: 'none'
+                                }}
                                 onClick={(e) => { 
                                     e.stopPropagation(); 
                                     handleSetSelectedHotspotId(h.id); 
@@ -1639,6 +2066,28 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                                     }
                                     if (window.innerWidth < 1024) setIsDrawerOpen(true);
                                 }}
+                                onFocus={() => {
+                                    setFocusedZoneId(h.id);
+                                    // Clear selection when tabbing to a different zone
+                                    if (selectedHotspotId !== h.id) {
+                                        setSelectedHotspotId(null);
+                                    }
+                                }}
+                                onBlur={() => setFocusedZoneId(null)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                        e.preventDefault();
+                                        handleSetSelectedHotspotId(h.id);
+                                        if (h.audioUrl) {
+                                            engine.stopAll();
+                                            engine.play(h.id, h.audioUrl, h.settings);
+                                        }
+                                        if (window.innerWidth < 1024) setIsDrawerOpen(true);
+                                    }
+                                }}
+                                tabIndex={0}
+                                role="button"
+                                aria-label={`Audio zone: ${h.name}`}
                             />
                         ))}
                         {isDrawing && currentPoints.length > 0 && (() => {
@@ -1675,6 +2124,15 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                     collapsedChannels={collapsedChannels}
                     toggleChannelCollapse={toggleChannelCollapse}
                     setNarrationModalOpen={setNarrationModalOpen}
+                    engine={engine}
+                    previewingIntroAudio={previewingIntroAudio}
+                    toggleIntroAudioPreview={toggleIntroAudioPreview}
+                    introPreviewTimerRef={introPreviewTimerRef}
+                    collapsedIntroAudio={collapsedIntroAudio}
+                    toggleIntroAudioCollapse={toggleIntroAudioCollapse}
+                    previewingZoneId={previewingZoneId}
+                    toggleZonePreview={toggleZonePreview}
+                    setIsCanvasHighlighted={setIsCanvasHighlighted}
                 />
             </div>
         </div>
@@ -1683,7 +2141,7 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
         <div className="lg:hidden fixed bottom-0 left-0 right-0 p-4 pointer-events-none flex justify-center z-30">
             <Drawer open={isDrawerOpen} onOpenChange={setIsDrawerOpen}>
                 <DrawerTrigger asChild>
-                    <Button className="shadow-xl rounded-full pointer-events-auto bg-white text-indigo-600 hover:bg-slate-50 border border-slate-200 h-12 px-6">
+                    <Button variant="outline" className="shadow-xl rounded-full pointer-events-auto bg-white h-12 px-6">
                         <Settings2 className="w-5 h-5 mr-2" />
                         {selectedHotspotId ? "Edit Zone" : "Settings & Layers"}
                         <ChevronUp className="w-4 h-4 ml-2 opacity-50" />
@@ -1706,6 +2164,15 @@ const EditorView = ({ project, onUpdate, onBack, onPreview, session, onShare, op
                             collapsedChannels={collapsedChannels}
                             toggleChannelCollapse={toggleChannelCollapse}
                             setNarrationModalOpen={setNarrationModalOpen}
+                            engine={engine}
+                            previewingIntroAudio={previewingIntroAudio}
+                            toggleIntroAudioPreview={toggleIntroAudioPreview}
+                            introPreviewTimerRef={introPreviewTimerRef}
+                            collapsedIntroAudio={collapsedIntroAudio}
+                            toggleIntroAudioCollapse={toggleIntroAudioCollapse}
+                            previewingZoneId={previewingZoneId}
+                            toggleZonePreview={toggleZonePreview}
+                            setIsCanvasHighlighted={setIsCanvasHighlighted}
                         />
                     </div>
                 </DrawerContent>
@@ -1764,7 +2231,11 @@ const PlayerView = ({ project, onBack, isShared }: { project: Project, onBack: (
         }
 
         if (introAudioRef.current) {
-            introAudioRef.current.pause();
+            try {
+              introAudioRef.current.pause();
+            } catch (e) {
+              console.error("Error pausing intro audio:", e);
+            }
         }
         engine.stopAll(); 
         
@@ -1775,15 +2246,30 @@ const PlayerView = ({ project, onBack, isShared }: { project: Project, onBack: (
         });
     };
 
+    const handleBack = () => {
+        // Exit fullscreen
+        if (document.fullscreenElement) {
+            document.exitFullscreen().catch((err) => console.log("Exit fullscreen error", err));
+        }
+        onBack();
+    };
+
     // Auto-play intro on mount
     useEffect(() => {
         if (!hasStarted && project.introAudioUrl) {
             const audio = new Audio(project.introAudioUrl);
             audio.loop = project.introAudioLoop; // Use loop setting
             introAudioRef.current = audio;
-            audio.play().catch(e => console.log("Autoplay blocked by browser policy:", e));
+            const playPromise = audio.play();
+            if (playPromise !== undefined) {
+              playPromise.catch(e => console.log("Autoplay blocked by browser policy:", e));
+            }
             return () => {
-                audio.pause();
+                try {
+                  audio.pause();
+                } catch (e) {
+                  console.error("Error pausing intro audio:", e);
+                }
             };
         }
     }, [hasStarted, project.introAudioUrl, project.introAudioLoop]);
@@ -1837,11 +2323,11 @@ const PlayerView = ({ project, onBack, isShared }: { project: Project, onBack: (
                         <h1 className="text-4xl font-bold text-white mb-2">{project.title}</h1>
                         <p className="text-slate-400">Interactive Sound Map</p>
                     </div>
-                    <Button size="lg" onClick={handleStart} className="w-full h-14 text-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-xl rounded-full transition-all hover:scale-105">
+                    <Button size="lg" onClick={handleStart} className="w-full h-14 text-lg bg-indigo-600 hover:bg-indigo-700 text-white rounded-full shadow-xl transition-all hover:scale-105">
                         <Play className="w-6 h-6 mr-2 fill-current" />
                         Start Experience
                     </Button>
-                    <Button variant="link" className="text-slate-500" onClick={onBack}>
+                    <Button variant="ghost" className="text-slate-400 hover:text-slate-300" onClick={handleBack}>
                         {isShared ? "Create Your Own" : (
                             <><ArrowLeft className="w-4 h-4 mr-2" /> Back to Editor</>
                         )}
@@ -1855,11 +2341,11 @@ const PlayerView = ({ project, onBack, isShared }: { project: Project, onBack: (
         <div className="fixed inset-0 bg-slate-900 flex flex-col z-50">
             <div className="absolute top-4 left-4 z-50">
                 {!isShared ? (
-                    <Button variant="secondary" size="sm" onClick={onBack} className="bg-black/20 text-white border-none backdrop-blur-md hover:bg-black/40">
+                    <Button variant="outline" size="sm" onClick={handleBack} className="bg-black/20 text-white border-white/20 backdrop-blur-md hover:bg-black/40">
                         <ArrowLeft className="w-4 h-4 mr-2" /> Back to Edit
                     </Button>
                 ) : (
-                    <Button variant="secondary" size="sm" className="bg-black/20 text-white border-none backdrop-blur-md" onClick={() => {
+                    <Button variant="outline" size="sm" className="bg-black/20 text-white border-white/20 backdrop-blur-md hover:bg-black/40" onClick={() => {
                          window.location.href = window.location.pathname;
                     }}>
                         <Plus className="w-4 h-4 mr-2" /> Create Map

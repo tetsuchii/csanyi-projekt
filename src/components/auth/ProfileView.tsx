@@ -81,7 +81,7 @@ export const ProfileView = ({ onBack, onSignOut, onShowOnboarding }: { onBack: (
                                     <CardDescription>{user.email}</CardDescription>
                                 </div>
                             </div>
-                            <Button variant="outline" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={handleSignOut}>
+                            <Button variant="destructive" onClick={handleSignOut}>
                                 <LogOut className="w-4 h-4 mr-2" /> Sign Out
                             </Button>
                         </div>
@@ -93,7 +93,7 @@ export const ProfileView = ({ onBack, onSignOut, onShowOnboarding }: { onBack: (
                                     <h4 className="text-sm font-medium">App Tutorial</h4>
                                     <p className="text-sm text-slate-500">Replay the onboarding tour to learn how to use the app.</p>
                                 </div>
-                                <Button variant="secondary" onClick={onShowOnboarding}>
+                                <Button variant="outline" onClick={onShowOnboarding}>
                                     <HelpCircle className="w-4 h-4 mr-2" /> View Tutorial
                                 </Button>
                              </div>
@@ -134,7 +134,7 @@ export const ProfileView = ({ onBack, onSignOut, onShowOnboarding }: { onBack: (
                                         />
                                     </div>
                                 </div>
-                                <Button type="submit" disabled={isInviting}>
+                                <Button type="submit" disabled={isInviting} className="bg-indigo-600 hover:bg-indigo-700 text-white">
                                     {isInviting ? "Sending..." : "Send Invite"}
                                 </Button>
                             </div>

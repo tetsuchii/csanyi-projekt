@@ -28,8 +28,8 @@ export const AudioConsentDialog = ({
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="max-w-lg">
         <div className="flex flex-col items-center text-center gap-4">
-          <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center">
-            <AlertTriangle className="w-8 h-8 text-blue-600" />
+          <div className="w-16 h-16 rounded-full bg-indigo-100 flex items-center justify-center">
+            <AlertTriangle className="w-8 h-8 text-indigo-600" />
           </div>
           <AlertDialogHeader className="space-y-3">
             <AlertDialogTitle className="text-2xl font-semibold text-slate-900">
@@ -51,7 +51,7 @@ export const AudioConsentDialog = ({
                   href="/terms"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
+                  className="text-indigo-600 hover:underline"
                 >
                   Terms of Service
                 </a>{' '}
@@ -60,7 +60,7 @@ export const AudioConsentDialog = ({
                   href="/privacy"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-600 hover:underline"
+                  className="text-indigo-600 hover:underline"
                 >
                   Privacy Policy
                 </a>
@@ -69,13 +69,13 @@ export const AudioConsentDialog = ({
             </AlertDialogDescription>
           </AlertDialogHeader>
         </div>
-        <AlertDialogFooter className="mt-2 flex gap-2 sm:gap-2">
-          <AlertDialogCancel onClick={onCancel} className="flex-1">
+        <AlertDialogFooter className="mt-2 flex flex-col-reverse sm:flex-row gap-2 sm:gap-2">
+          <AlertDialogCancel onClick={onCancel} className="flex-1 sm:flex-1">
             Cancel
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
-            className="bg-blue-600 hover:bg-blue-700 text-white flex-1"
+            className="bg-indigo-600 hover:bg-indigo-700 text-white flex-1 sm:flex-1"
           >
             I Agree
           </AlertDialogAction>
